@@ -11,6 +11,7 @@ from .Channel import ChannelConfig
 from .Receiver import ReceiverConfig, runAsProcess
 from .ScanWindow import ScanWindowConfig
 
+import uuid
 
 class Scanner():
     MAINTENANCE_LOOP_TIME_S = 60
@@ -99,13 +100,24 @@ class Scanner():
     def addProcessQueueCallback(self, cb):
         self._processQueueCallbacks.append(cb)
 
-    def getChannelById(self, channelId) -> Optional[ChannelConfig]:
-        if channelId in self._channelConfigByIdCache:
-            return self._channelConfigByIdCache[channelId]
+
+    def getChannelById(self, channelId):
+        # Accept UUID objects or UUID strings
+        try:
+            cid_uuid = uuid.UUID(str(channelId))
+        except Exception:
+            cid_uuid = None
+
         for cc in self.channelConfigs:
-            if cc.id == channelId:
-                self._channelConfigByIdCache[channelId] = cc
+            # cc.id might be UUID or string
+            if str(cc.id) == str(channelId):
                 return cc
+            if cid_uuid is not None and hasattr(cc, "id"):
+                try:
+                    if isinstance(cc.id, uuid.UUID) and cc.id == cid_uuid:
+                        return cc
+                except Exception:
+                    pass
         return None
 
     ###################################################################
