@@ -1,0 +1,11 @@
+services:
+  sdr_scanner_native:
+    build: .
+    ports:
+      - "8080:8080"   # web UI + REST/WS control API
+      - "8123:8123"   # websocket audio output (see example-sdrscan.yaml -> outputs)
+    privileged: true
+    volumes:
+      - ./data:/data
+      - /dev/bus/usb:/dev/bus/usb
+    restart: unless-stopped

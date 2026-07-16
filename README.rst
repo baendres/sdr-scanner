@@ -10,6 +10,16 @@ Another unique feature is support for multiple receivers, both to speed up the s
 that scanning can continue while a Channel is active.
 
 
+Native C++ Rewrite
+===================
+
+A ground-up rewrite in GNU Radio's native C++ API is in progress under ``native/`` - see
+``native/README.md``. It stores configuration in a SQLite database instead of YAML, supports
+live config changes (squelch, CTCSS, etc.) with no container restart, and adds CTCSS squelch.
+It's a foundation (FM/NFM/AM + CTCSS + one receiver family) rather than full feature parity
+yet; this Python app is unaffected and keeps working as-is in the meantime.
+
+
 Current Status
 ==============
 

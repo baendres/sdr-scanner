@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>sdr-scanner</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="title">sdr-scanner</div>
+    <div class="status" id="connStatus">disconnected</div>
+  </header>
+
+  <main>
+    <section class="left">
+      <h2>Active Channels</h2>
+      <div id="activeList" class="active-list"></div>
+    </section>
+
+    <section class="right">
+      <div class="card">
+        <h2>Selected Channel</h2>
+        <div id="selectedMeta" class="selected-meta">None</div>
+        <div class="btn-row">
+          <button id="btnHold" class="btn">Hold</button>
+          <button id="btnSolo" class="btn">Solo</button>
+          <button id="btnMute" class="btn">Mute</button>
+          <button id="btnForce" class="btn danger">Force Active</button>
+        </div>
+        <div class="btn-row">
+          <button id="btnEnable" class="btn">Enable</button>
+          <button id="btnDisable1h" class="btn">Disable 1h</button>
+        </div>
+
+        <div class="field-row">
+          <label for="squelchInput">Squelch (dB)</label>
+          <input id="squelchInput" type="number" step="1" />
+          <button id="btnSquelchApply">Set</button>
+        </div>
+        <div class="field-row">
+          <label for="ctcssInput">CTCSS (Hz)</label>
+          <input id="ctcssInput" type="number" step="0.1" placeholder="off" />
+          <button id="btnCtcssApply">Set</button>
+          <button id="btnCtcssClear">Off</button>
+        </div>
+        <div class="field-row">
+          <label for="gainInput">Audio Gain (dB)</label>
+          <input id="gainInput" type="number" step="1" />
+          <button id="btnGainApply">Set</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Config</h2>
+        <div class="table-wrap">
+          <table id="cfgTable">
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Freq (MHz)</th>
+                <th>Mode</th>
+                <th>Squelch</th>
+                <th>CTCSS</th>
+                <th>Enabled</th>
+                <th>Hold</th>
+                <th>Mute</th>
+                <th>Solo</th>
+                <th>Force</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Debug</h2>
+        <pre id="log"></pre>
+      </div>
+    </section>
+  </main>
+
+<script src="/app.js"></script>
+</body>
+</html>

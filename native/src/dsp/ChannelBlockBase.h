@@ -1,0 +1,96 @@
+#pragma once
+
+#include <gnuradio/hier_block2.h>
+#include <gnuradio/blocks/mute.h>
+#include <gnuradio/gr_complex.h>
+
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+
+#include "../config/Types.h"
+#include "HelperBlocks.h"
+
+namespace sdrscan {
+
+inline double dbToRatio(double dB) { return std::pow(10.0, dB / 20.0); }
+
+// C++ port of Channel.py's ChannelBlock_Base. A gr::hier_block2 taking a complex baseband
+// stream in (already tuned/decimated by the ScanWindow) and producing a float audio stream
+// out. Concrete demod modes (ChannelBlockFM, ChannelBlockAM) extend this.
+//
+// All of the "hot update" setters (setSquelchValue, setAudioGain, setMute, ...) are safe to
+// call while the flowgraph is running - this is exactly the mechanism the control API uses to
+// apply live changes with no flowgraph restart (see native/README.md).
+class ChannelBlockBase : public gr::hier_block2 {
+public:
+    ChannelBlockBase(const std::string& channelId,
+                      const std::string& label,
+                      bool mute,
+                      TriBool solo,
+                      bool hold,
+                      double squelchThreshold,
+                      double audioGain_dB,
+                      double dwellTime_s,
+                      int audioSampleRate,
+                      std::function<void(ChannelStatusUpdate)> statusCallback);
+
+    const std::string& id() const { return channelId_; }
+
+    virtual double getMinimumScanTime() const { return 0.1; }
+
+    void setMute(bool mute);
+    void setSolo(TriBool solo);
+    void setHold(bool hold);
+    void setDwellTime(double dwellTime_s) { dwellTime_s_ = dwellTime_s; }
+
+    virtual void setForceActive(bool forceActive) = 0;
+    virtual void setSquelchValue(double squelchThreshold) = 0;
+    virtual void setAudioGain(double audioGain_dB) = 0;
+    // No-op by default; only ChannelBlockFM supports CTCSS (it's an FM sub-audible-tone
+    // scheme - AM/SSB/etc channel blocks don't have a meaningful implementation).
+    virtual void setCtcssTone(std::optional<double> /*toneHz*/) {}
+
+    // Recomputes + reports (if changed) the channel's status; must be called periodically
+    // (the Scanner polls this while a ScanWindow is running).
+    virtual ChannelStatus getStatus() = 0;
+
+protected:
+    // Common status bookkeeping shared by all demod modes: given whether the squelch(es)
+    // are currently unmuted, tracks active/dwell timing and invokes the status callback
+    // (throttled the same way the Python version was). Returns the resulting status.
+    ChannelStatus computeAndReportStatus(bool unmutedNow);
+
+    void connectVolume(const gr::basic_block_sptr& sourceBlock, int sourceBlockPort);
+
+    void updateRSSI(float dBFS);
+    void updateVolume(float dBFS);
+
+    std::string channelId_;
+    std::string label_;
+    bool mute_;
+    TriBool solo_;
+    bool hold_;
+    bool forceActive_ = false;
+    double squelchThreshold_;
+    double audioGainFactor_;
+    double dwellTime_s_;
+    int audioSampleRate_;
+
+    bool active_ = false;
+    double lastActive_ = 0.0;
+    std::optional<ChannelStatus> lastStatusReport_;
+    double lastStatusTime_ = 0.0;
+
+    std::optional<float> rssi_dBFS_;
+    std::optional<float> noiseFloor_dBFS_;
+    std::optional<float> volume_dBFS_;
+
+    std::function<void(ChannelStatusUpdate)> statusCallback_;
+
+    gr::blocks::mute_ff::sptr blockAudioMute_;
+    std::shared_ptr<MagToPowerLowPassBlock> blockVolume_;
+};
+
+} // namespace sdrscan
