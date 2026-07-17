@@ -4,6 +4,7 @@
 #include <gnuradio/io_signature.h>
 
 #include <chrono>
+#include <iostream>
 #include <thread>
 
 namespace sdrscan {
@@ -108,6 +109,11 @@ void AudioMixer::run() {
     auto startTime = std::chrono::steady_clock::now();
     int64_t samplesMixed = 0;
 
+    // Diagnostic only (see the note below): counts samples where a stream's buffer was empty
+    // at mix time, i.e. silence got fabricated in place of real (not-yet-produced) audio.
+    std::vector<int64_t> starvedSamples(numInputStreams_, 0);
+    auto lastStarvationReport = startTime;
+
     while (!stopFlag_) {
         for (int i = 0; i < numInputStreams_; i++) {
             std::vector<float> inBuf;
@@ -129,6 +135,12 @@ void AudioMixer::run() {
                 if (!buf.empty()) {
                     outSum += buf.front();
                     buf.pop_front();
+                } else {
+                    // This stream's receiver hasn't produced this sample yet (it's paced by
+                    // real RF/demod throughput, not wall clock) - contributing silence here
+                    // rather than waiting is what keeps this loop's ~1ms tick rate, but it
+                    // means the output stream gets a genuine gap, not just delivery jitter.
+                    starvedSamples[i]++;
                 }
             }
             int32_t iOut = static_cast<int32_t>(outSum * 32767.0f);
@@ -147,6 +159,20 @@ void AudioMixer::run() {
         }
 
         for (auto& o : outputs_) o->send(newSamples);
+
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastStarvationReport >= std::chrono::seconds(1)) {
+            for (int i = 0; i < numInputStreams_; i++) {
+                if (starvedSamples[i] > 0) {
+                    double pct = 100.0 * static_cast<double>(starvedSamples[i]) / AUDIO_SAMPLERATE;
+                    std::cerr << "AudioMixer: receiver " << i << " starved for " << starvedSamples[i]
+                              << " samples in the last ~1s (~" << pct << "% silence-filled - "
+                              << "its audio production is falling behind real time)\n";
+                }
+                starvedSamples[i] = 0;
+            }
+            lastStarvationReport = now;
+        }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
