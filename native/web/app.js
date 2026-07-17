@@ -348,12 +348,75 @@ function connectWS() {
 
 ///
 // Browser audio playback (int16 PCM over a separate WS, from the "websocket" AudioOutput)
+//
+// This used to schedule a separate AudioBufferSourceNode per incoming ~250ms chunk via
+// src.start(scheduledTime). That's a well-known source of audible clicks/gaps: Web Audio only
+// schedules start times to the nearest internal render-quantum boundary, so chaining many
+// discrete buffer nodes back-to-back - even with otherwise-perfect timing - produces a click
+// at every boundary (4/sec at 250ms chunks). That matched the reported symptom exactly: choppy
+// audio that didn't improve with any server-side timing fix, and was still choppy with squelch
+// forced open (i.e. on genuinely continuous, ungated audio - not squelch chatter, not mixer
+// starvation, not delivery jitter).
+//
+// Fixed by not scheduling discrete buffers at all: incoming samples are pushed into a plain
+// ring buffer, and a single continuously-running audio callback (ScriptProcessorNode) pulls
+// from it every render cycle. There's no discrete start/stop boundary anywhere, so there's
+// nothing for a click to happen at.
 
 let audioWs = null;
 let audioCtx = null;
 let gainNode = null;
-let nextPlayTime = 0;
+let processorNode = null;
 let audioPlaying = false;
+let playbackBuffer = null;
+let playbackPrimed = false;
+
+// ScriptProcessorNode is deprecated in favor of AudioWorklet, but remains broadly supported
+// and is far simpler to wire up inline here (no separate module file, no secure-context/
+// module-loading requirements). Fine for this use case - not low-latency interactive audio.
+// Revisit with an AudioWorklet if that deprecation ever becomes a practical problem.
+const PROCESSOR_BUFFER_SIZE = 4096;
+const PLAYBACK_RING_SECONDS = 2.0; // ring buffer capacity
+const PRIME_SECONDS = 0.4; // wait for this much buffered audio before unmuting playback
+
+class PlaybackRingBuffer {
+  constructor(capacitySamples) {
+    this.buf = new Float32Array(capacitySamples);
+    this.capacity = capacitySamples;
+    this.head = 0; // next write index
+    this.tail = 0; // next read index
+  }
+
+  available() {
+    return this.head >= this.tail ? (this.head - this.tail) : (this.capacity - this.tail + this.head);
+  }
+
+  write(samples) {
+    for (let i = 0; i < samples.length; i++) {
+      const next = (this.head + 1) % this.capacity;
+      if (next === this.tail) {
+        // Full - drop the oldest sample rather than blocking or growing unbounded. Should be
+        // rare given the 2s capacity vs ~0.25s chunks; if it does happen it's a brief skip,
+        // not a click (no discontinuity in what's actually played back).
+        this.tail = (this.tail + 1) % this.capacity;
+      }
+      this.buf[this.head] = samples[i];
+      this.head = next;
+    }
+  }
+
+  // Fills dest with available samples, zero-filling any shortfall (silence on underrun, same
+  // policy the server side uses - never desyncs playback timing, just goes quiet briefly).
+  read(dest) {
+    let n = 0;
+    while (n < dest.length && this.tail !== this.head) {
+      dest[n] = this.buf[this.tail];
+      this.tail = (this.tail + 1) % this.capacity;
+      n++;
+    }
+    for (; n < dest.length; n++) dest[n] = 0;
+  }
+}
 
 function audioWsUrl() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -366,7 +429,21 @@ function ensureAudioContext() {
   gainNode = audioCtx.createGain();
   gainNode.gain.value = getVolume();
   gainNode.connect(audioCtx.destination);
-  nextPlayTime = audioCtx.currentTime + 0.05;
+
+  playbackBuffer = new PlaybackRingBuffer(Math.round(AUDIO_SAMPLE_RATE * PLAYBACK_RING_SECONDS));
+  playbackPrimed = false;
+
+  processorNode = audioCtx.createScriptProcessor(PROCESSOR_BUFFER_SIZE, 1, 1);
+  processorNode.onaudioprocess = (event) => {
+    const out = event.outputBuffer.getChannelData(0);
+    if (!playbackPrimed) {
+      out.fill(0);
+      if (playbackBuffer.available() >= AUDIO_SAMPLE_RATE * PRIME_SECONDS) playbackPrimed = true;
+      return;
+    }
+    playbackBuffer.read(out);
+  };
+  processorNode.connect(gainNode);
 }
 
 function getVolume() {
@@ -376,44 +453,15 @@ function getVolume() {
   return Number.isFinite(v) ? v : 0.8;
 }
 
-// The server batches audio into ~250ms WebSocket frames (see AudioOutputWebsocket.cpp), so
-// these margins need real slack across *multiple* frames, not fractions of one - the previous
-// values (0.10/0.30/0.06s) were tuned for an earlier per-message cadence of ~1ms slivers and
-// left less than one frame's worth of cushion against any delivery jitter, causing this
-// re-prime/reset logic to trigger on nearly every frame under realistic network jitter (e.g.
-// WSL2's virtualized USB+network stack) - audibly choppy playback even with clean, complete
-// frames arriving. A scanner isn't a real-time conversation, so trading ~0.5-1s of extra
-// latency for real jitter tolerance is the right call here.
-const TARGET_LATENCY_SEC = 0.50;
-const MAX_LATENCY_SEC = 1.00;
-const STARTUP_PRIME_SEC = 0.30;
-
 function handlePcmFrame(buf) {
-  if (!audioCtx || !gainNode) return;
+  if (!playbackBuffer) return;
 
   const int16 = new Int16Array(buf);
   const f32 = new Float32Array(int16.length);
   for (let i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768.0;
+  playbackBuffer.write(f32);
 
-  const audioBuf = audioCtx.createBuffer(1, f32.length, AUDIO_SAMPLE_RATE);
-  audioBuf.copyToChannel(f32, 0);
-
-  const src = audioCtx.createBufferSource();
-  src.buffer = audioBuf;
-  src.connect(gainNode);
-
-  const now = audioCtx.currentTime;
-  if (nextPlayTime < now) nextPlayTime = now + STARTUP_PRIME_SEC;
-
-  let latency = nextPlayTime - now;
-  if (latency > MAX_LATENCY_SEC) {
-    nextPlayTime = now + TARGET_LATENCY_SEC;
-  }
-
-  src.start(nextPlayTime);
-  nextPlayTime += audioBuf.duration;
-
-  setAudioStatus(`playing (${Math.max(0, nextPlayTime - now).toFixed(2)}s buffered)`);
+  setAudioStatus(`playing (${(playbackBuffer.available() / AUDIO_SAMPLE_RATE).toFixed(2)}s buffered)`);
 }
 
 function connectAudioWs() {
@@ -440,6 +488,11 @@ async function startAudio() {
 
   ensureAudioContext();
   try { await audioCtx.resume(); } catch {}
+
+  // Reset playback state on (re)start - audioCtx/processorNode persist across stop/start
+  // toggles, but stale buffered audio from before a stop shouldn't play immediately on resume.
+  playbackBuffer = new PlaybackRingBuffer(Math.round(AUDIO_SAMPLE_RATE * PLAYBACK_RING_SECONDS));
+  playbackPrimed = false;
 
   gainNode.gain.value = getVolume();
   document.getElementById("audioVolume")?.addEventListener("input", () => {
