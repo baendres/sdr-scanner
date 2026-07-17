@@ -376,9 +376,17 @@ function getVolume() {
   return Number.isFinite(v) ? v : 0.8;
 }
 
-const TARGET_LATENCY_SEC = 0.10;
-const MAX_LATENCY_SEC = 0.30;
-const STARTUP_PRIME_SEC = 0.06;
+// The server batches audio into ~250ms WebSocket frames (see AudioOutputWebsocket.cpp), so
+// these margins need real slack across *multiple* frames, not fractions of one - the previous
+// values (0.10/0.30/0.06s) were tuned for an earlier per-message cadence of ~1ms slivers and
+// left less than one frame's worth of cushion against any delivery jitter, causing this
+// re-prime/reset logic to trigger on nearly every frame under realistic network jitter (e.g.
+// WSL2's virtualized USB+network stack) - audibly choppy playback even with clean, complete
+// frames arriving. A scanner isn't a real-time conversation, so trading ~0.5-1s of extra
+// latency for real jitter tolerance is the right call here.
+const TARGET_LATENCY_SEC = 0.50;
+const MAX_LATENCY_SEC = 1.00;
+const STARTUP_PRIME_SEC = 0.30;
 
 function handlePcmFrame(buf) {
   if (!audioCtx || !gainNode) return;
