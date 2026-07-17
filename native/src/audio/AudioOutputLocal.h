@@ -2,6 +2,7 @@
 
 #include <portaudio.h>
 
+#include <chrono>
 #include <deque>
 #include <mutex>
 
@@ -29,6 +30,12 @@ private:
     std::deque<int16_t> outputBuffer_;
     PaStream* stream_ = nullptr;
     bool paInitialized_ = false;
+
+    // Avoids hammering Pa_OpenDefaultStream (and spamming logs) every ~1ms when there's no
+    // usable output device at all - e.g. WSL2 with no host audio, or a genuinely unplugged
+    // device. Retries are throttled to once per this interval instead.
+    std::chrono::steady_clock::time_point nextReconnectAttempt_{};
+    static constexpr std::chrono::seconds kReconnectCooldown{5};
 };
 
 } // namespace sdrscan
