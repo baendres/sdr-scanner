@@ -129,14 +129,26 @@ bool SoapyReceiver::startWindow(const std::string& windowId) {
         window = it->second;
     }
 
+    source_->set_frequency(0, window->hardwareFreq_hz());
+
+    if (!flowgraphStarted_) {
+        // First window ever for this receiver: the USB/SDR stream doesn't exist yet, so this
+        // is the one time a real start() (which allocates the hardware stream) is needed.
+        source_->set_sample_rate(0, window->rfSampleRate());
+        topBlock_->connect(source_, 0, window->block(), 0);
+        topBlock_->connect(window->block(), 0, audioSink_, 0);
+        topBlock_->start();
+        flowgraphStarted_ = true;
+    } else {
+        // Live reconfigure: the hardware stream keeps running throughout (see the
+        // flowgraphStarted_ comment in the header for why this matters).
+        topBlock_->lock();
+        topBlock_->connect(source_, 0, window->block(), 0);
+        topBlock_->connect(window->block(), 0, audioSink_, 0);
+        topBlock_->unlock();
+    }
+
     currentWindow_ = window;
-    source_->set_sample_rate(0, currentWindow_->rfSampleRate());
-    source_->set_frequency(0, currentWindow_->hardwareFreq_hz());
-
-    topBlock_->connect(source_, 0, currentWindow_->block(), 0);
-    topBlock_->connect(currentWindow_->block(), 0, audioSink_, 0);
-    topBlock_->start();
-
     windowTimeout_ = nowUnixSeconds() + currentWindow_->getMinimumScanTime();
     windowRunning_ = true;
     return true;
@@ -147,10 +159,14 @@ void SoapyReceiver::stopCurrentWindow() {
         windowRunning_ = false;
         return;
     }
-    topBlock_->stop();
-    topBlock_->wait();
+    // See startWindow(): this only detaches this window's blocks from the running flowgraph
+    // (topBlock_->stop() is never called here) - the hardware stream is left running so the
+    // next startWindow() can retune live instead of re-negotiating the USB stream from
+    // scratch. The stream is only actually stopped once, in run()'s final shutdown below.
+    topBlock_->lock();
     topBlock_->disconnect(source_, 0, currentWindow_->block(), 0);
     topBlock_->disconnect(currentWindow_->block(), 0, audioSink_, 0);
+    topBlock_->unlock();
     currentWindow_.reset();
     windowRunning_ = false;
 }
@@ -194,6 +210,13 @@ void SoapyReceiver::run(const std::function<std::string()>& nextWindowIdProvider
     }
 
     if (windowRunning_) stopCurrentWindow();
+
+    // stopCurrentWindow() only detaches blocks now (see its comment) - actually stop the
+    // hardware stream here, once, at real receiver shutdown.
+    if (flowgraphStarted_) {
+        topBlock_->stop();
+        topBlock_->wait();
+    }
 }
 
 void SoapyReceiver::stop() {

@@ -74,6 +74,17 @@ private:
     gr::top_block_sptr topBlock_;
     std::optional<std::vector<int>> cachedSampleRates_;
 
+    // Once true, the underlying USB/SDR stream is running continuously and window hops are
+    // done via topBlock_->lock()/unlock() (rewire which window's blocks are connected, retune
+    // the source) rather than topBlock_->stop()/start(). A full stop+restart forces the
+    // driver to fully re-negotiate the hardware stream (SoapySDR logs this as "Allocating N
+    // zero-copy buffers") on every single hop between scan windows, which is expensive even
+    // natively and was measured to cause 50-90% audio dropout per hop over a virtualized USB
+    // passthrough (e.g. WSL2 + usbipd) - see native/README.md. All windows on one receiver
+    // share the same rfSampleRate (Scanner::buildWindows applies one bandwidth to all windows
+    // for a given receiver), so only frequency ever needs to change between hops.
+    bool flowgraphStarted_ = false;
+
     std::mutex mailboxMutex_;
     std::optional<std::vector<ScanWindowConfig>> pendingConfigs_;
 
