@@ -2,6 +2,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/beast/websocket.hpp>
+#include <boost/beast/core/stream_traits.hpp>
 
 #include <atomic>
 #include <memory>

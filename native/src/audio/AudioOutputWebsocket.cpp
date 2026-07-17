@@ -1,7 +1,9 @@
 #include "AudioOutputWebsocket.h"
 #include "../dsp/Const.h"
 
+#include <chrono>
 #include <iostream>
+#include <thread>
 
 namespace sdrscan {
 
@@ -40,6 +42,10 @@ void AudioOutputWebsocket::reconnect() {
         acceptor_.reset();
         return;
     }
+    // Non-blocking so acceptLoop() can poll stopFlag_ instead of sitting in a synchronous
+    // accept() that acceptor_->close() from another thread isn't guaranteed to interrupt -
+    // same issue as HttpServer::acceptLoop(), see the note there.
+    acceptor_->non_blocking(true);
 
     acceptThread_ = std::thread(&AudioOutputWebsocket::acceptLoop, this);
 }
@@ -49,6 +55,10 @@ void AudioOutputWebsocket::acceptLoop() {
         boost::system::error_code ec;
         tcp::socket socket(ioc_);
         acceptor_->accept(socket, ec);
+        if (ec == boost::asio::error::would_block) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
         if (ec) {
             if (stopFlag_) break;
             continue;
@@ -77,10 +87,15 @@ void AudioOutputWebsocket::close() {
     if (acceptThread_.joinable()) acceptThread_.join();
     acceptor_.reset();
 
+    // Close the raw socket rather than the graceful websocket::stream::close() - the latter
+    // waits (no timeout configured) for the peer's close handshake response, which would hang
+    // this call indefinitely against a browser tab that's open but not responding. See the
+    // matching note in HttpServer::stop() for the (more severe, thread-safety) version of
+    // this same issue.
     std::lock_guard<std::mutex> lock(clientsMutex_);
     for (auto& c : clients_) {
         boost::system::error_code ec;
-        c->close(websocket::close_code::normal, ec);
+        beast::get_lowest_layer(*c).close(ec);
     }
     clients_.clear();
 }

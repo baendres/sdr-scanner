@@ -4,6 +4,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/beast/core/buffers_to_string.hpp>
+#include <boost/beast/core/stream_traits.hpp>
 
 #include <atomic>
 #include <memory>

@@ -2,9 +2,11 @@
 #include "Protocol.h"
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 namespace sdrscan {
 
@@ -62,6 +64,11 @@ void HttpServer::start() {
     if (ec) {
         throw std::runtime_error("HttpServer: failed to bind " + host_ + ":" + std::to_string(port_) + ": " + ec.message());
     }
+    // Non-blocking so acceptLoop() can poll stopFlag_ instead of sitting in a synchronous
+    // accept() that acceptor_->close() from another thread isn't guaranteed to interrupt
+    // (Asio only documents cancellation for asynchronous operations) - without this, stop()
+    // could hang forever in acceptThread_.join().
+    acceptor_->non_blocking(true);
 
     stopFlag_ = false;
     acceptThread_ = std::thread(&HttpServer::acceptLoop, this);
@@ -77,10 +84,20 @@ void HttpServer::stop() {
     if (acceptThread_.joinable()) acceptThread_.join();
     acceptor_.reset();
 
+    // NOTE: deliberately closing the raw socket (lowest layer) rather than doing a graceful
+    // websocket::stream::close() here. Each client's session thread (runWsSession, still
+    // running - these are detached, not tracked/joined) is normally blocked in
+    // client->ws->read(...) on this exact same stream object. Beast's websocket::stream is
+    // not safe for concurrent operations from two threads, and close() also waits
+    // (unbounded, no timeout configured) for the peer's close handshake response - either of
+    // those was enough to hang this call indefinitely whenever a browser tab was still
+    // connected, which is why Ctrl+C never actually exited the process. Closing the
+    // underlying socket instead just makes the session thread's pending read() fail
+    // immediately, which is thread-safe and unblocks it without a handshake round-trip.
     std::lock_guard<std::mutex> lock(clientsMutex_);
     for (auto& c : clients_) {
         boost::system::error_code ec;
-        c->ws->close(websocket::close_code::normal, ec);
+        beast::get_lowest_layer(*c->ws).close(ec);
     }
     clients_.clear();
 }
@@ -90,6 +107,12 @@ void HttpServer::acceptLoop() {
         boost::system::error_code ec;
         tcp::socket socket(ioc_);
         acceptor_->accept(socket, ec);
+        if (ec == boost::asio::error::would_block) {
+            // No connection pending right now (see the non_blocking(true) note in start()) -
+            // brief sleep so this polls stopFlag_ regularly without busy-spinning the CPU.
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
         if (ec) {
             if (stopFlag_) break;
             continue;
