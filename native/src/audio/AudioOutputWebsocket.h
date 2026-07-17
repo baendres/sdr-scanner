@@ -42,6 +42,16 @@ private:
 
     std::mutex clientsMutex_;
     std::vector<std::shared_ptr<WsStream>> clients_;
+
+    // AudioMixer calls send() roughly once per ms with whatever handful of samples
+    // accumulated in that instant. Forwarding each of those as its own WS message produces
+    // ~1000 tiny, irregularly-sized messages/sec - browsers schedule a separate audio buffer
+    // node per incoming message, so that many small clock-drifted messages per second is a
+    // direct cause of choppy playback. Buffer up to a ~250ms frame (matching the Python
+    // version's AudioServerOutput_Websocket.SAMPLES_PER_FRAME, and this codebase's own
+    // AudioOutputUdp) before actually writing to the socket.
+    std::mutex outputBufferMutex_;
+    std::vector<int16_t> outputBuffer_;
 };
 
 } // namespace sdrscan

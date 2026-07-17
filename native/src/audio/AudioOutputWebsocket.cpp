@@ -1,4 +1,5 @@
 #include "AudioOutputWebsocket.h"
+#include "../dsp/Const.h"
 
 #include <iostream>
 
@@ -7,6 +8,11 @@ namespace sdrscan {
 namespace beast = boost::beast;
 namespace websocket = beast::websocket;
 using tcp = boost::asio::ip::tcp;
+
+namespace {
+// Matches AudioServer.py's AudioServerOutput_Websocket.SAMPLES_PER_FRAME (~250ms).
+constexpr size_t kSamplesPerFrame = AUDIO_SAMPLERATE / 4;
+} // namespace
 
 AudioOutputWebsocket::AudioOutputWebsocket(std::string host, int port)
     : host_(std::move(host)), port_(port) {}
@@ -82,15 +88,31 @@ void AudioOutputWebsocket::close() {
 void AudioOutputWebsocket::send(const std::vector<int16_t>& samples) {
     if (samples.empty()) return;
 
+    // Accumulate into ~250ms frames rather than firing a WS message for every tiny batch
+    // AudioMixer hands us (it calls send() roughly once per ms) - see the note on
+    // outputBuffer_ in the header for why that matters.
+    std::vector<std::vector<int16_t>> frames;
+    {
+        std::lock_guard<std::mutex> lock(outputBufferMutex_);
+        outputBuffer_.insert(outputBuffer_.end(), samples.begin(), samples.end());
+        while (outputBuffer_.size() >= kSamplesPerFrame) {
+            frames.emplace_back(outputBuffer_.begin(), outputBuffer_.begin() + kSamplesPerFrame);
+            outputBuffer_.erase(outputBuffer_.begin(), outputBuffer_.begin() + kSamplesPerFrame);
+        }
+    }
+    if (frames.empty()) return;
+
     std::lock_guard<std::mutex> lock(clientsMutex_);
-    auto it = clients_.begin();
-    while (it != clients_.end()) {
-        boost::system::error_code ec;
-        (*it)->write(boost::asio::buffer(samples.data(), samples.size() * sizeof(int16_t)), ec);
-        if (ec) {
-            it = clients_.erase(it);
-        } else {
-            ++it;
+    for (const auto& frame : frames) {
+        auto it = clients_.begin();
+        while (it != clients_.end()) {
+            boost::system::error_code ec;
+            (*it)->write(boost::asio::buffer(frame.data(), frame.size() * sizeof(int16_t)), ec);
+            if (ec) {
+                it = clients_.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 }
