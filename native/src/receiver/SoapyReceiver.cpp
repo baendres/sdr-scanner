@@ -26,9 +26,18 @@ SoapyReceiver::SoapyReceiver(ReceiverConfig config,
     : config_(std::move(config)), statusCallback_(std::move(statusCallback)), audioSink_(std::move(audioSink)) {
 
     std::string dev;
+    std::string streamArgs;
     std::string deviceArg = config_.deviceArg.value_or("");
     if (config_.type == ReceiverType::RTL_SDR) {
         dev = "driver=rtlsdr";
+        // SoapyRTLSDR's async read queue defaults to 15 buffers (visible in its own
+        // "Allocating 15 zero-copy buffers" log) - sized for bare-metal USB latency. Over a
+        // virtualized USB passthrough (e.g. WSL2 usbipd), extra completion latency can run
+        // that queue dry, making readStream() hit its own internal timeout repeatedly - which
+        // shows up downstream as silence in clean, fixed ~100ms multiples, not the irregular
+        // jitter you'd expect from real RF/processing delay. A deeper queue gives the async
+        // callback thread enough slack to absorb that latency without starving the reader.
+        streamArgs = "buffers=32";
     } else {
         if (!config_.driver.has_value()) {
             throw std::runtime_error("SoapyReceiver: 'driver' is required for SOAPY receiver type");
@@ -36,7 +45,7 @@ SoapyReceiver::SoapyReceiver(ReceiverConfig config,
         dev = "driver=" + *config_.driver;
     }
 
-    source_ = gr::soapy::source::make(dev, "fc32", 1, deviceArg, "", {""}, {""});
+    source_ = gr::soapy::source::make(dev, "fc32", 1, deviceArg, streamArgs, {""}, {""});
     source_->set_gain_mode(0, false);
     source_->set_frequency_correction(0, 0);
 
