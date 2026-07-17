@@ -2,3 +2,5 @@ sdrscan.yaml
 */__pycache__
 *.pyc
 *.swp
+native/build/
+native/claude_build/
