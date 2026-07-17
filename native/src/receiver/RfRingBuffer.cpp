@@ -74,10 +74,22 @@ int RfRingBufferSourceBlock::work(int noutput_items,
                                    gr_vector_const_void_star& /*input_items*/,
                                    gr_vector_void_star& output_items) {
     gr_complex* out = static_cast<gr_complex*>(output_items[0]);
-    int numRead = ring_->read(out, noutput_items);
-    // 0 is a valid "nothing ready yet" return for a sync_block source - the scheduler handles
-    // this by yielding briefly and retrying, it's not an error condition.
-    return numRead;
+
+    // Actively wait for data here rather than returning 0 immediately. This block has no
+    // GNU Radio-native input connection (it bridges from a plain memory buffer filled by a
+    // different flowgraph/thread), so the TPB scheduler has no buffer-notification machinery
+    // to wake it promptly when new data lands - a 0 return leaves the delay before the next
+    // work() call up to the scheduler's own backoff heuristics, which can be far longer than
+    // the data was actually behind by. Polling here keeps that retry latency small and bounded
+    // instead. The iteration cap is a safety valve so a genuinely stalled capture side can't
+    // hang stop()/wait() on this block forever - it falls back to the old "return 0" behavior.
+    constexpr int kMaxWaitIterations = 2000; // ~1s at 500us/iteration
+    for (int i = 0; i < kMaxWaitIterations; i++) {
+        int numRead = ring_->read(out, noutput_items);
+        if (numRead > 0) return numRead;
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
+    }
+    return 0;
 }
 
 } // namespace sdrscan

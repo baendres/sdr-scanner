@@ -6,6 +6,9 @@
 
 #include "../src/receiver/RfRingBuffer.h"
 
+#include <chrono>
+#include <thread>
+
 using namespace sdrscan;
 
 TEST_CASE("RfRingBuffer round-trips a simple write/read") {
@@ -88,4 +91,29 @@ TEST_CASE("RfRingBuffer preserves order across many wraps with varying chunk siz
     for (size_t i = 0; i < expected.size(); i++) {
         CHECK(actual[i] == expected[i]);
     }
+}
+
+TEST_CASE("RfRingBufferSourceBlock::work() waits for late-arriving data instead of returning 0") {
+    // Regression test for the choppy-audio bug: work() used to return 0 the instant the ring
+    // was momentarily empty, leaving the retry timing up to the GNU Radio scheduler's own
+    // backoff heuristics. It should instead poll internally and hand back real data as soon as
+    // it lands, even if that's a few milliseconds after the call started.
+    auto ring = std::make_shared<RfRingBuffer>(16);
+    RfRingBufferSourceBlock block(ring);
+
+    std::vector<gr_complex> in = {{1, 0}, {2, 0}, {3, 0}};
+    std::thread writer([&]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        ring->write(in.data(), static_cast<int>(in.size()));
+    });
+
+    std::vector<gr_complex> out(3);
+    gr_vector_const_void_star inputItems;
+    gr_vector_void_star outputItems = {out.data()};
+
+    int n = block.work(3, inputItems, outputItems);
+    writer.join();
+
+    REQUIRE(n == 3);
+    for (int i = 0; i < 3; i++) CHECK(out[i] == in[i]);
 }
