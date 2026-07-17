@@ -14,6 +14,7 @@
 #include "../config/Types.h"
 #include "../dsp/ScanWindow.h"
 #include "../audio/AudioMixer.h"
+#include "RfRingBuffer.h"
 
 namespace sdrscan {
 
@@ -71,19 +72,28 @@ private:
     std::shared_ptr<AudioRingBufferSinkBlock> audioSink_;
 
     gr::soapy::source::sptr source_;
-    gr::top_block_sptr topBlock_;
     std::optional<std::vector<int>> cachedSampleRates_;
 
-    // Once true, the underlying USB/SDR stream is running continuously and window hops are
-    // done via topBlock_->lock()/unlock() (rewire which window's blocks are connected, retune
-    // the source) rather than topBlock_->stop()/start(). A full stop+restart forces the
-    // driver to fully re-negotiate the hardware stream (SoapySDR logs this as "Allocating N
-    // zero-copy buffers") on every single hop between scan windows, which is expensive even
-    // natively and was measured to cause 50-90% audio dropout per hop over a virtualized USB
-    // passthrough (e.g. WSL2 + usbipd) - see native/README.md. All windows on one receiver
-    // share the same rfSampleRate (Scanner::buildWindows applies one bandwidth to all windows
-    // for a given receiver), so only frequency ever needs to change between hops.
-    bool flowgraphStarted_ = false;
+    // Two separate flowgraphs, bridged through an RfRingBuffer (see RfRingBuffer.h for the
+    // full "why" - short version: stopping/restarting *any* flowgraph containing the hardware
+    // source, even via topBlock_->lock()/unlock(), forces GNU Radio to stop+restart every
+    // block in it including the source, which forces the driver to fully re-negotiate the USB
+    // stream. Splitting into two flowgraphs means the one with the hardware source never gets
+    // touched again after its first start(), no matter how often the processing side gets
+    // reconfigured for a window hop).
+    //
+    // captureTopBlock_: source_ -> rfRingBufferSink_. Started exactly once, never stopped
+    // again until receiver shutdown.
+    gr::top_block_sptr captureTopBlock_;
+    std::shared_ptr<RfRingBuffer> rfRingBuffer_;
+    std::shared_ptr<RfRingBufferSinkBlock> rfRingBufferSink_;
+    bool captureStarted_ = false;
+
+    // windowTopBlock_: rfRingBufferSource_ -> current window's block -> audioSink_. Freely
+    // stopped/reconfigured/restarted on every window hop - cheap, since it touches no
+    // hardware at all.
+    gr::top_block_sptr windowTopBlock_;
+    std::shared_ptr<RfRingBufferSourceBlock> rfRingBufferSource_;
 
     std::mutex mailboxMutex_;
     std::optional<std::vector<ScanWindowConfig>> pendingConfigs_;

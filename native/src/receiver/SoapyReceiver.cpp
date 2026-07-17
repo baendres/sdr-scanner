@@ -13,6 +13,11 @@ namespace {
 // Curated list matching Receiver.py's Receiver_RTLSDR.SAMPLE_RATES - rates known to decimate
 // down cleanly, rather than trusting the RTL-SDR's raw (misleadingly continuous) reported range.
 const std::vector<int> kRtlSdrSampleRates = {1'024'000, 1'536'000, 1'792'000, 1'920'000, 2'048'000};
+
+// ~0.5s of headroom at the highest RF rate this app will ever configure - generous enough to
+// absorb the brief gap while windowTopBlock_ is being reconfigured during a hop without ever
+// overflowing (see RfRingBuffer.h).
+constexpr size_t kRfRingBufferCapacity = static_cast<size_t>(MAX_RF_SAMPLERATE) / 2;
 } // namespace
 
 SoapyReceiver::SoapyReceiver(ReceiverConfig config,
@@ -43,7 +48,14 @@ SoapyReceiver::SoapyReceiver(ReceiverConfig config,
         source_->set_gain(0, config_.gain.value_or(20.0));
     }
 
-    topBlock_ = gr::make_top_block("SDR Rx " + config_.id);
+    rfRingBuffer_ = std::make_shared<RfRingBuffer>(kRfRingBufferCapacity);
+
+    captureTopBlock_ = gr::make_top_block("SDR Capture " + config_.id);
+    rfRingBufferSink_ = std::make_shared<RfRingBufferSinkBlock>(rfRingBuffer_);
+    captureTopBlock_->connect(source_, 0, rfRingBufferSink_, 0);
+
+    windowTopBlock_ = gr::make_top_block("SDR Window " + config_.id);
+    rfRingBufferSource_ = std::make_shared<RfRingBufferSourceBlock>(rfRingBuffer_);
 }
 
 std::vector<int> SoapyReceiver::getSampleRates() {
@@ -131,22 +143,20 @@ bool SoapyReceiver::startWindow(const std::string& windowId) {
 
     source_->set_frequency(0, window->hardwareFreq_hz());
 
-    if (!flowgraphStarted_) {
+    if (!captureStarted_) {
         // First window ever for this receiver: the USB/SDR stream doesn't exist yet, so this
-        // is the one time a real start() (which allocates the hardware stream) is needed.
+        // is the one time captureTopBlock_ (and therefore the hardware) actually starts. It
+        // is never stopped again until receiver shutdown - see the header comment.
         source_->set_sample_rate(0, window->rfSampleRate());
-        topBlock_->connect(source_, 0, window->block(), 0);
-        topBlock_->connect(window->block(), 0, audioSink_, 0);
-        topBlock_->start();
-        flowgraphStarted_ = true;
-    } else {
-        // Live reconfigure: the hardware stream keeps running throughout (see the
-        // flowgraphStarted_ comment in the header for why this matters).
-        topBlock_->lock();
-        topBlock_->connect(source_, 0, window->block(), 0);
-        topBlock_->connect(window->block(), 0, audioSink_, 0);
-        topBlock_->unlock();
+        captureTopBlock_->start();
+        captureStarted_ = true;
     }
+
+    // windowTopBlock_ contains no hardware, so freely reconfiguring/restarting it per hop is
+    // cheap - no USB stream re-negotiation, unlike the capture side.
+    windowTopBlock_->connect(rfRingBufferSource_, 0, window->block(), 0);
+    windowTopBlock_->connect(window->block(), 0, audioSink_, 0);
+    windowTopBlock_->start();
 
     currentWindow_ = window;
     windowTimeout_ = nowUnixSeconds() + currentWindow_->getMinimumScanTime();
@@ -159,14 +169,10 @@ void SoapyReceiver::stopCurrentWindow() {
         windowRunning_ = false;
         return;
     }
-    // See startWindow(): this only detaches this window's blocks from the running flowgraph
-    // (topBlock_->stop() is never called here) - the hardware stream is left running so the
-    // next startWindow() can retune live instead of re-negotiating the USB stream from
-    // scratch. The stream is only actually stopped once, in run()'s final shutdown below.
-    topBlock_->lock();
-    topBlock_->disconnect(source_, 0, currentWindow_->block(), 0);
-    topBlock_->disconnect(currentWindow_->block(), 0, audioSink_, 0);
-    topBlock_->unlock();
+    windowTopBlock_->stop();
+    windowTopBlock_->wait();
+    windowTopBlock_->disconnect(rfRingBufferSource_, 0, currentWindow_->block(), 0);
+    windowTopBlock_->disconnect(currentWindow_->block(), 0, audioSink_, 0);
     currentWindow_.reset();
     windowRunning_ = false;
 }
@@ -211,11 +217,10 @@ void SoapyReceiver::run(const std::function<std::string()>& nextWindowIdProvider
 
     if (windowRunning_) stopCurrentWindow();
 
-    // stopCurrentWindow() only detaches blocks now (see its comment) - actually stop the
-    // hardware stream here, once, at real receiver shutdown.
-    if (flowgraphStarted_) {
-        topBlock_->stop();
-        topBlock_->wait();
+    // The hardware capture flowgraph is only ever stopped here, at real receiver shutdown.
+    if (captureStarted_) {
+        captureTopBlock_->stop();
+        captureTopBlock_->wait();
     }
 }
 
