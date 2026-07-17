@@ -174,7 +174,13 @@ void AudioMixer::run() {
             lastStarvationReport = now;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // Yield rather than sleep: this loop's pacing is what determines how promptly mixed
+        // audio gets generated and sent, so any coarseness here shows up directly as audible
+        // gaps. Under WSL2/Hyper-V, short timed sleeps can get coalesced up to the VM's
+        // timer-interrupt granularity (observed as a persistent ~100ms stall pattern that
+        // survived unrelated fixes elsewhere in the pipeline) - sched_yield() cedes the CPU
+        // without going through that timed-wait path, trading CPU usage for tighter pacing.
+        std::this_thread::yield();
     }
 
     for (auto& o : outputs_) o->close();

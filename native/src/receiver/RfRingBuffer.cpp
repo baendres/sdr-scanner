@@ -81,13 +81,19 @@ int RfRingBufferSourceBlock::work(int noutput_items,
     // to wake it promptly when new data lands - a 0 return leaves the delay before the next
     // work() call up to the scheduler's own backoff heuristics, which can be far longer than
     // the data was actually behind by. Polling here keeps that retry latency small and bounded
-    // instead. The iteration cap is a safety valve so a genuinely stalled capture side can't
-    // hang stop()/wait() on this block forever - it falls back to the old "return 0" behavior.
-    constexpr int kMaxWaitIterations = 2000; // ~1s at 500us/iteration
-    for (int i = 0; i < kMaxWaitIterations; i++) {
+    // instead. The wall-clock deadline is a safety valve so a genuinely stalled capture side
+    // can't hang stop()/wait() on this block forever - it falls back to the old "return 0"
+    // behavior.
+    //
+    // This spins on sched_yield() rather than sleeping a fixed duration: under WSL2/Hyper-V,
+    // short timed sleeps (nanosleep/sleep_for) can get coalesced up to the VM's timer-interrupt
+    // granularity - observed here as a rock-solid ~100ms period surviving multiple unrelated
+    // fixes - while sched_yield() just cedes the CPU without going through that timed-wait path.
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+    while (std::chrono::steady_clock::now() < deadline) {
         int numRead = ring_->read(out, noutput_items);
         if (numRead > 0) return numRead;
-        std::this_thread::sleep_for(std::chrono::microseconds(500));
+        std::this_thread::yield();
     }
     return 0;
 }
