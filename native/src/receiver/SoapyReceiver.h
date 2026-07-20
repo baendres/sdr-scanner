@@ -105,6 +105,13 @@ private:
     double windowTimeout_ = 0.0;
     bool windowRunning_ = false;
 
+    // A hardware/USB communication failure (e.g. a flaky I2C write to the tuner) surfaces as
+    // an exception from startWindow()'s SoapySDR calls - caught there so it can't escape this
+    // receiver's thread uncaught (which would abort the whole process). If the device is
+    // genuinely offline, every window on this receiver would fail in turn; this cooldown keeps
+    // that from becoming a tight retry loop hammering the device and spamming the log.
+    double nextStartAttemptAllowedAt_ = 0.0;
+
     std::atomic<bool> stopFlag_{false};
 };
 

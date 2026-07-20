@@ -150,22 +150,37 @@ bool SoapyReceiver::startWindow(const std::string& windowId) {
         window = it->second;
     }
 
-    source_->set_frequency(0, window->hardwareFreq_hz());
+    try {
+        source_->set_frequency(0, window->hardwareFreq_hz());
 
-    if (!captureStarted_) {
-        // First window ever for this receiver: the USB/SDR stream doesn't exist yet, so this
-        // is the one time captureTopBlock_ (and therefore the hardware) actually starts. It
-        // is never stopped again until receiver shutdown - see the header comment.
-        source_->set_sample_rate(0, window->rfSampleRate());
-        captureTopBlock_->start();
-        captureStarted_ = true;
+        if (!captureStarted_) {
+            // First window ever for this receiver: the USB/SDR stream doesn't exist yet, so
+            // this is the one time captureTopBlock_ (and therefore the hardware) actually
+            // starts. It is never stopped again until receiver shutdown - see the header
+            // comment.
+            source_->set_sample_rate(0, window->rfSampleRate());
+            captureTopBlock_->start();
+            captureStarted_ = true;
+        }
+
+        // windowTopBlock_ contains no hardware, so freely reconfiguring/restarting it per hop
+        // is cheap - no USB stream re-negotiation, unlike the capture side.
+        windowTopBlock_->connect(rfRingBufferSource_, 0, window->block(), 0);
+        windowTopBlock_->connect(window->block(), 0, audioSink_, 0);
+        windowTopBlock_->start();
+    } catch (const std::exception& e) {
+        // GNU Radio/SoapySDR surface hardware and USB communication failures (a flaky I2C
+        // write to the tuner, a dropped USB connection, ...) as exceptions - this must not be
+        // allowed to escape this receiver's dedicated thread uncaught, since an uncaught
+        // exception on any thread calls std::terminate() and aborts the *entire* process,
+        // taking every other receiver and channel down with it. Treat it the same as "window
+        // vanished under us": skip this attempt and let the scheduler retry (this window, or
+        // another) after a cooldown.
+        std::cerr << "SoapyReceiver " << config_.id << ": failed to start window " << windowId
+                   << ": " << e.what() << "\n";
+        nextStartAttemptAllowedAt_ = nowUnixSeconds() + 1.0;
+        return false;
     }
-
-    // windowTopBlock_ contains no hardware, so freely reconfiguring/restarting it per hop is
-    // cheap - no USB stream re-negotiation, unlike the capture side.
-    windowTopBlock_->connect(rfRingBufferSource_, 0, window->block(), 0);
-    windowTopBlock_->connect(window->block(), 0, audioSink_, 0);
-    windowTopBlock_->start();
 
     currentWindow_ = window;
     windowTimeout_ = nowUnixSeconds() + currentWindow_->getMinimumScanTime();
@@ -211,11 +226,17 @@ void SoapyReceiver::run(const std::function<std::string()>& nextWindowIdProvider
         if (!windowRunning_) {
             std::string nextId = nextWindowIdProvider();
             if (!nextId.empty()) {
-                if (startWindow(nextId)) {
+                // Still have to claim-then-release via the provider/onWindowDone pair even
+                // during a post-failure cooldown (see startWindow()'s catch block) - skipping
+                // the claim itself would leave Scanner's round-robin scheduling state stuck
+                // thinking this window is permanently assigned to this receiver.
+                bool started = nowUnixSeconds() >= nextStartAttemptAllowedAt_ && startWindow(nextId);
+                if (started) {
                     onWindowStart(nextId);
                 } else {
-                    // Window vanished under us (config rebuild race) - release the claim so
-                    // the scheduler can hand it to someone else (or drop it) next time.
+                    // Window vanished under us (config rebuild race), startWindow() failed, or
+                    // we're still cooling down after an earlier failure - release the claim so
+                    // the scheduler can hand it to someone else (or retry) next time.
                     onWindowDone(nextId);
                 }
             }
