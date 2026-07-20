@@ -64,9 +64,15 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     ///
     // Input channelization + squelch + demod
 
+    // low_pass_2's explicit stopband attenuation (vs. low_pass's default ~53dB Hamming window)
+    // matters here specifically: real-hardware testing turned up a spur (likely from the RTL-SDR's
+    // own internal clock/PLL, reproduced even with the antenna disconnected and independent of
+    // this app's own code - a minimal bare GNU Radio flowgraph shows it too) that aliases into the
+    // audio band through decimation. A tighter anti-aliasing filter here, before decimation, is the
+    // standard remedy regardless of the spur's exact source frequency.
     blockFreqXlatingFilter_ = gr::filter::freq_xlating_fir_filter_ccf::make(
         inputDecimation,
-        gr::filter::firdes::low_pass(1.0, rfSampleRate_, halfBandwidth, halfBandwidth / 4.0),
+        gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, halfBandwidth, halfBandwidth / 4.0, 80.0),
         freqOffset_Hz,
         rfSampleRate_);
 

@@ -36,9 +36,12 @@ ChannelBlockAM::ChannelBlockAM(const std::string& channelId,
     ///
     // Input channelization + squelch + demod
 
+    // See the matching note in ChannelBlockFM.cpp - low_pass_2's explicit stopband attenuation
+    // (vs. low_pass's default ~53dB) gives more rejection to a hardware-originated spur that
+    // aliases into the passband through decimation.
     blockFreqXlatingFilter_ = gr::filter::freq_xlating_fir_filter_ccf::make(
         inputDecimation,
-        gr::filter::firdes::low_pass(1.0, rfSampleRate_, 4000, 2000),
+        gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, 4000, 2000, 80.0),
         freqOffset_Hz,
         rfSampleRate_);
 
