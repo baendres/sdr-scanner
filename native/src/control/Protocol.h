@@ -115,4 +115,39 @@ inline ChannelConfig channelConfigFromJson(const json& j) {
     return cc;
 }
 
+// Builds a ReceiverConfig from a POST/PATCH /api/receivers body. Receiver edits are
+// restart-to-apply (see native/README.md) - this is only ever used to write the database, never
+// to reconfigure a live receiver.
+inline ReceiverConfig receiverConfigFromJson(const json& j) {
+    ReceiverConfig rc;
+    rc.id = j.value("id", std::string());
+    auto type = receiverTypeFromString(j.value("type", std::string("rtlsdr")));
+    if (!type) throw std::runtime_error("Unknown receiver type");
+    rc.type = *type;
+    if (j.contains("deviceArg") && !j.at("deviceArg").is_null()) {
+        rc.deviceArg = j.at("deviceArg").get<std::string>();
+    }
+    if (j.contains("driver") && !j.at("driver").is_null()) {
+        rc.driver = j.at("driver").get<std::string>();
+    }
+    if (j.contains("gain") && !j.at("gain").is_null()) {
+        rc.gain = j.at("gain").get<double>();
+    }
+    if (j.contains("gains") && j.at("gains").is_object()) {
+        for (auto& [k, v] : j.at("gains").items()) rc.gains[k] = v.get<double>();
+    }
+    rc.enabled = j.value("enabled", true);
+    return rc;
+}
+
+// Builds an OutputConfig from a POST/PATCH /api/outputs body. Also restart-to-apply.
+inline OutputConfig outputConfigFromJson(const json& j) {
+    OutputConfig oc;
+    oc.id = j.value("id", static_cast<int64_t>(0));
+    oc.type = j.at("type").get<std::string>();
+    oc.configJson = j.value("config", json::object()).dump();
+    oc.enabled = j.value("enabled", true);
+    return oc;
+}
+
 } // namespace sdrscan::protocol

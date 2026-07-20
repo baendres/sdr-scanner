@@ -263,6 +263,72 @@ void Scanner::removeChannel(const std::string& channelId) {
     buildWindows();
 }
 
+void Scanner::editChannel(const ChannelConfig& cc) {
+    if (cc.id.empty()) throw std::runtime_error("editChannel: id is required");
+    {
+        std::lock_guard<std::mutex> lock(configMutex_);
+        if (channelConfigsById_.find(cc.id) == channelConfigsById_.end()) {
+            throw std::runtime_error("Channel not found: " + cc.id);
+        }
+        channelConfigsById_[cc.id] = cc;
+        db_.upsertChannel(cc);
+    }
+    buildWindows();
+    ScannerEvent event;
+    event.type = ScannerEventType::ChannelConfigChanged;
+    event.channelConfig = cc;
+    emit(event);
+}
+
+std::string Scanner::upsertReceiverConfig(ReceiverConfig rc) {
+    if (rc.id.empty()) rc.id = makeUuid();
+    std::lock_guard<std::mutex> lock(configMutex_);
+    db_.upsertReceiver(rc);
+    // Keep the in-memory cache (what getSnapshot() reads) in sync with the database even though
+    // the change won't reach the live receivers_/audioMixer_ until restart - otherwise the
+    // settings page wouldn't see its own pending edit until then.
+    auto it = std::find_if(receiverConfigs_.begin(), receiverConfigs_.end(),
+                            [&](const ReceiverConfig& existing) { return existing.id == rc.id; });
+    if (it != receiverConfigs_.end()) {
+        *it = rc;
+    } else {
+        receiverConfigs_.push_back(rc);
+    }
+    return rc.id;
+}
+
+void Scanner::deleteReceiverConfig(const std::string& receiverId) {
+    std::lock_guard<std::mutex> lock(configMutex_);
+    db_.deleteReceiver(receiverId);
+    receiverConfigs_.erase(
+        std::remove_if(receiverConfigs_.begin(), receiverConfigs_.end(),
+                        [&](const ReceiverConfig& rc) { return rc.id == receiverId; }),
+        receiverConfigs_.end());
+}
+
+int64_t Scanner::upsertOutputConfig(OutputConfig oc) {
+    std::lock_guard<std::mutex> lock(configMutex_);
+    int64_t id = db_.upsertOutput(oc);
+    oc.id = id;
+    auto it = std::find_if(outputConfigs_.begin(), outputConfigs_.end(),
+                            [&](const OutputConfig& existing) { return existing.id == id; });
+    if (it != outputConfigs_.end()) {
+        *it = oc;
+    } else {
+        outputConfigs_.push_back(oc);
+    }
+    return id;
+}
+
+void Scanner::deleteOutputConfig(int64_t outputId) {
+    std::lock_guard<std::mutex> lock(configMutex_);
+    db_.deleteOutput(outputId);
+    outputConfigs_.erase(
+        std::remove_if(outputConfigs_.begin(), outputConfigs_.end(),
+                        [&](const OutputConfig& oc) { return oc.id == outputId; }),
+        outputConfigs_.end());
+}
+
 void Scanner::setMaxChannelsPerWindow(int maxChannelsPerWindow) {
     settings_.maxChannelsPerWindow = maxChannelsPerWindow;
     db_.saveScannerSetting("maxChannelsPerWindow", std::to_string(maxChannelsPerWindow));

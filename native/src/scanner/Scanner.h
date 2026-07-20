@@ -68,7 +68,20 @@ public:
 
     std::string addChannel(ChannelConfig cc); // cc.id is assigned if empty; returns the id
     void removeChannel(const std::string& channelId);
+    // Full-record edit of an existing channel (frequency/label/mode, plus everything addChannel
+    // accepts) - same upsert-then-rebuild path as addChannel, just requires the id already exist.
+    void editChannel(const ChannelConfig& cc);
     void setMaxChannelsPerWindow(int maxChannelsPerWindow);
+
+    ///
+    // Receiver/output config - database-only (see native/README.md): these are read once at
+    // startup, so edits here take effect on the next restart rather than live. No live receiver
+    // or audio output ever gets touched by these.
+
+    std::string upsertReceiverConfig(ReceiverConfig rc); // rc.id is assigned if empty; returns the id
+    void deleteReceiverConfig(const std::string& receiverId);
+    int64_t upsertOutputConfig(OutputConfig oc); // oc.id is assigned if 0; returns the id
+    void deleteOutputConfig(int64_t outputId);
 
 private:
     void buildWindows();

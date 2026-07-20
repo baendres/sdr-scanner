@@ -35,6 +35,8 @@ http::response<http::string_body> errorResponse(unsigned version, http::status s
     return jsonResponse(version, status, nlohmann::json{{"error", message}});
 }
 
+// Not actually channel-specific despite the name - just strips a path prefix. Kept the name
+// since it's the one already used throughout for /api/channels/{id}.
 std::string channelIdFromPath(const std::string& target, const std::string& prefix) {
     if (target.size() <= prefix.size() || target.compare(0, prefix.size(), prefix) != 0) return "";
     return target.substr(prefix.size());
@@ -184,6 +186,30 @@ void HttpServer::handleConnection(tcp::socket socket) {
                             scanner_.setMaxChannelsPerWindow(body.at("maxChannelsPerWindow").get<int>());
                         }
                         res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"ok", true}});
+                    } else if (req.method() == http::verb::post && path == "/api/receivers") {
+                        auto rc = protocol::receiverConfigFromJson(haveBody ? body : nlohmann::json::object());
+                        std::string id = scanner_.upsertReceiverConfig(rc);
+                        res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"id", id}});
+                    } else if (req.method() == http::verb::patch && path.rfind("/api/receivers/", 0) == 0) {
+                        std::string id = channelIdFromPath(path, "/api/receivers/");
+                        applyReceiverPatchFields(id, haveBody ? body : nlohmann::json::object());
+                        res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"ok", true}});
+                    } else if (req.method() == http::verb::delete_ && path.rfind("/api/receivers/", 0) == 0) {
+                        std::string id = channelIdFromPath(path, "/api/receivers/");
+                        scanner_.deleteReceiverConfig(id);
+                        res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"ok", true}});
+                    } else if (req.method() == http::verb::post && path == "/api/outputs") {
+                        auto oc = protocol::outputConfigFromJson(haveBody ? body : nlohmann::json::object());
+                        int64_t id = scanner_.upsertOutputConfig(oc);
+                        res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"id", id}});
+                    } else if (req.method() == http::verb::patch && path.rfind("/api/outputs/", 0) == 0) {
+                        int64_t id = std::stoll(channelIdFromPath(path, "/api/outputs/"));
+                        applyOutputPatchFields(id, haveBody ? body : nlohmann::json::object());
+                        res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"ok", true}});
+                    } else if (req.method() == http::verb::delete_ && path.rfind("/api/outputs/", 0) == 0) {
+                        int64_t id = std::stoll(channelIdFromPath(path, "/api/outputs/"));
+                        scanner_.deleteOutputConfig(id);
+                        res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"ok", true}});
                     } else if (req.method() == http::verb::get) {
                         std::string filePath = path == "/" ? "index.html" : path.substr(1);
                         if (filePath.find("..") != std::string::npos) {
@@ -219,6 +245,25 @@ void HttpServer::handleConnection(tcp::socket socket) {
 }
 
 void HttpServer::applyChannelPatchFields(const std::string& channelId, const json& body) {
+    // Structural fields need a full-record edit + window rebuild rather than a per-field "hot"
+    // setter. Applied first from the pre-patch snapshot so any hot fields also present in the
+    // same PATCH body still win below (they're applied after, straight to the live block).
+    if (body.contains("freq_hz") || body.contains("label") || body.contains("mode")) {
+        auto snapshot = scanner_.getSnapshot();
+        auto it = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
+                                [&](const ChannelConfig& cc) { return cc.id == channelId; });
+        if (it == snapshot.channels.end()) throw std::runtime_error("Channel not found: " + channelId);
+        ChannelConfig cc = *it;
+        if (body.contains("freq_hz")) cc.freq_hz = body.at("freq_hz").get<int64_t>();
+        if (body.contains("label")) cc.label = body.at("label").get<std::string>();
+        if (body.contains("mode")) {
+            auto mode = channelModeFromString(body.at("mode").get<std::string>());
+            if (!mode) throw std::runtime_error("Unknown channel mode");
+            cc.mode = *mode;
+        }
+        scanner_.editChannel(cc);
+    }
+
     if (body.contains("squelchThreshold")) scanner_.setChannelSquelch(channelId, body.at("squelchThreshold").get<double>());
     if (body.contains("ctcssToneHz")) {
         auto v = body.at("ctcssToneHz");
@@ -234,6 +279,31 @@ void HttpServer::applyChannelPatchFields(const std::string& channelId, const jso
     if (body.contains("disableUntil") && !body.at("disableUntil").is_null()) {
         scanner_.setChannelDisableUntil(channelId, body.at("disableUntil").get<double>());
     }
+}
+
+// Receiver/output PATCH: restart-to-apply (see Scanner::upsertReceiverConfig's header note), so
+// this just merges the patch fields into the existing database record and re-upserts - no live
+// hardware/output reconfiguration involved.
+void HttpServer::applyReceiverPatchFields(const std::string& receiverId, const json& body) {
+    auto snapshot = scanner_.getSnapshot();
+    auto it = std::find_if(snapshot.receivers.begin(), snapshot.receivers.end(),
+                            [&](const ReceiverConfig& rc) { return rc.id == receiverId; });
+    if (it == snapshot.receivers.end()) throw std::runtime_error("Receiver not found: " + receiverId);
+    json merged = protocol::receiverConfigToJson(*it);
+    for (auto& [k, v] : body.items()) merged[k] = v;
+    merged["id"] = receiverId;
+    scanner_.upsertReceiverConfig(protocol::receiverConfigFromJson(merged));
+}
+
+void HttpServer::applyOutputPatchFields(int64_t outputId, const json& body) {
+    auto snapshot = scanner_.getSnapshot();
+    auto it = std::find_if(snapshot.outputs.begin(), snapshot.outputs.end(),
+                            [&](const OutputConfig& oc) { return oc.id == outputId; });
+    if (it == snapshot.outputs.end()) throw std::runtime_error("Output not found: " + std::to_string(outputId));
+    json merged = protocol::outputConfigToJson(*it);
+    for (auto& [k, v] : body.items()) merged[k] = v;
+    merged["id"] = outputId;
+    scanner_.upsertOutputConfig(protocol::outputConfigFromJson(merged));
 }
 
 void HttpServer::sendToClient(const std::shared_ptr<WsClient>& client, const json& msg) {

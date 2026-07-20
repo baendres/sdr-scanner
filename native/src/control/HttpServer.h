@@ -55,6 +55,8 @@ private:
     void onScannerEvent(const ScannerEvent& event);
     void broadcast(const json& msg);
     void applyChannelPatchFields(const std::string& channelId, const json& body);
+    void applyReceiverPatchFields(const std::string& receiverId, const json& body);
+    void applyOutputPatchFields(int64_t outputId, const json& body);
 
     Scanner& scanner_;
     std::string host_;

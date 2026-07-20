@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>sdr-scanner settings</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/settings.css" />
+</head>
+<body>
+  <header>
+    <div class="title">sdr-scanner settings</div>
+    <a class="status" href="/">&larr; back to scanner</a>
+  </header>
+
+  <main class="settings-main">
+    <section class="card">
+      <h2>Channels</h2>
+      <p class="hint">Changes apply immediately - no restart needed.</p>
+      <div class="table-wrap">
+        <table id="channelsTable">
+          <thead>
+            <tr>
+              <th>Label</th>
+              <th>Freq (MHz)</th>
+              <th>Mode</th>
+              <th>Squelch (dB)</th>
+              <th>CTCSS (Hz)</th>
+              <th>Audio Gain (dB)</th>
+              <th>Dwell (s)</th>
+              <th>Enabled</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="channelsBody"></tbody>
+          <tfoot>
+            <tr id="channelAddRow">
+              <td><input type="text" id="newChLabel" placeholder="label" /></td>
+              <td><input type="number" id="newChFreq" step="0.001" placeholder="146.520" /></td>
+              <td>
+                <select id="newChMode">
+                  <option value="FM">FM</option>
+                  <option value="NFM">NFM</option>
+                  <option value="AM">AM</option>
+                </select>
+              </td>
+              <td><input type="number" id="newChSquelch" step="1" value="-55" /></td>
+              <td><input type="number" id="newChCtcss" step="0.1" placeholder="off" /></td>
+              <td><input type="number" id="newChGain" step="1" value="0" /></td>
+              <td><input type="number" id="newChDwell" step="0.5" value="3" /></td>
+              <td><input type="checkbox" id="newChEnabled" checked /></td>
+              <td><button class="btn" id="btnAddChannel">Add</button></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Receivers</h2>
+      <p class="hint restart-hint">Changes take effect the next time sdrscan is restarted.</p>
+      <div class="table-wrap">
+        <table id="receiversTable">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Device Arg</th>
+              <th>Driver</th>
+              <th>Gain (dB)</th>
+              <th>Enabled</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="receiversBody"></tbody>
+          <tfoot>
+            <tr>
+              <td>
+                <select id="newRxType">
+                  <option value="RTL-SDR">RTL-SDR</option>
+                  <option value="SOAPY">SOAPY</option>
+                </select>
+              </td>
+              <td><input type="text" id="newRxDeviceArg" placeholder="(optional)" /></td>
+              <td><input type="text" id="newRxDriver" placeholder="required for SOAPY" /></td>
+              <td><input type="number" id="newRxGain" step="1" placeholder="auto" /></td>
+              <td><input type="checkbox" id="newRxEnabled" checked /></td>
+              <td><button class="btn" id="btnAddReceiver">Add</button></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Audio Outputs</h2>
+      <p class="hint restart-hint">Changes take effect the next time sdrscan is restarted.</p>
+      <div class="table-wrap">
+        <table id="outputsTable">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Config</th>
+              <th>Enabled</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="outputsBody"></tbody>
+          <tfoot>
+            <tr>
+              <td>
+                <select id="newOutType">
+                  <option value="local">local</option>
+                  <option value="udp">udp</option>
+                  <option value="websocket">websocket</option>
+                </select>
+              </td>
+              <td id="newOutConfigCell"></td>
+              <td><input type="checkbox" id="newOutEnabled" checked /></td>
+              <td><button class="btn" id="btnAddOutput">Add</button></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <div class="card">
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </div>
+  </main>
+
+<script src="/settings.js"></script>
+</body>
+</html>
