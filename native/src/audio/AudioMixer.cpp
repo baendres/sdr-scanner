@@ -11,7 +11,10 @@ namespace sdrscan {
 
 namespace {
 constexpr size_t kRingBufferCapacity = AUDIO_SAMPLERATE; // ~1s of audio per receiver
-constexpr int kMixerBufferTargetLen = 4000; // discard backlog beyond this to avoid latency buildup
+// Discard backlog beyond this to avoid unbounded latency buildup. Must stay comfortably above
+// AudioMixer::kTargetLatencySeconds's worth of samples, or this would trim away the deliberate
+// buffering margin that constant exists to maintain.
+constexpr int kMixerBufferTargetLen = AUDIO_SAMPLERATE; // ~1s
 }
 
 ///
@@ -109,6 +112,16 @@ void AudioMixer::run() {
     auto startTime = std::chrono::steady_clock::now();
     int64_t samplesMixed = 0;
 
+    // GNU Radio's own scheduler delivers decoded audio in bursts, not a smooth trickle - each
+    // block in a channel's demod chain only runs once enough input has accumulated, and this
+    // chain decimates the RF rate down to audio rate by a large factor. That burstiness is
+    // normal, not a bug. Mixing with zero margin (i.e. always emitting exactly what "should"
+    // exist by now per the wall clock) turns every gap between bursts into a permanent hole in
+    // the output, even though the "missing" audio arrives moments later - it just lands after
+    // the hole instead of filling it. Trailing the wall clock by this much gives bursty
+    // production room to land before its samples are actually needed.
+    constexpr double kTargetLatencySeconds = 0.3;
+
     // Diagnostic only (see the note below): counts samples where a stream's buffer was empty
     // at mix time, i.e. silence got fabricated in place of real (not-yet-produced) audio.
     std::vector<int64_t> starvedSamples(numInputStreams_, 0);
@@ -124,7 +137,8 @@ void AudioMixer::run() {
         }
 
         double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count();
-        int64_t samplesToMix = static_cast<int64_t>(elapsed * AUDIO_SAMPLERATE) - samplesMixed;
+        double targetElapsed = std::max(0.0, elapsed - kTargetLatencySeconds);
+        int64_t samplesToMix = static_cast<int64_t>(targetElapsed * AUDIO_SAMPLERATE) - samplesMixed;
 
         std::vector<int16_t> newSamples;
         newSamples.reserve(static_cast<size_t>(std::max<int64_t>(0, samplesToMix)));
