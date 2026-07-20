@@ -375,9 +375,9 @@ let playbackPrimed = false;
 // and is far simpler to wire up inline here (no separate module file, no secure-context/
 // module-loading requirements). Fine for this use case - not low-latency interactive audio.
 // Revisit with an AudioWorklet if that deprecation ever becomes a practical problem.
-const PROCESSOR_BUFFER_SIZE = 4096;
+const PROCESSOR_BUFFER_SIZE = 1024;
 const PLAYBACK_RING_SECONDS = 2.0; // ring buffer capacity
-const PRIME_SECONDS = 0.4; // wait for this much buffered audio before unmuting playback
+const PRIME_SECONDS = 0.15; // wait for this much buffered audio before unmuting playback
 
 class PlaybackRingBuffer {
   constructor(capacitySamples) {

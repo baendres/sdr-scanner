@@ -14,7 +14,7 @@ constexpr size_t kRingBufferCapacity = AUDIO_SAMPLERATE; // ~1s of audio per rec
 // Discard backlog beyond this to avoid unbounded latency buildup. Must stay comfortably above
 // AudioMixer::kTargetLatencySeconds's worth of samples, or this would trim away the deliberate
 // buffering margin that constant exists to maintain.
-constexpr int kMixerBufferTargetLen = AUDIO_SAMPLERATE; // ~1s
+constexpr int kMixerBufferTargetLen = AUDIO_SAMPLERATE / 3; // ~333ms
 }
 
 ///
@@ -120,7 +120,7 @@ void AudioMixer::run() {
     // the output, even though the "missing" audio arrives moments later - it just lands after
     // the hole instead of filling it. Trailing the wall clock by this much gives bursty
     // production room to land before its samples are actually needed.
-    constexpr double kTargetLatencySeconds = 0.3;
+    constexpr double kTargetLatencySeconds = 0.1;
 
     // Diagnostic only (see the note below): counts samples where a stream's buffer was empty
     // at mix time, i.e. silence got fabricated in place of real (not-yet-produced) audio.

@@ -12,8 +12,10 @@ namespace websocket = beast::websocket;
 using tcp = boost::asio::ip::tcp;
 
 namespace {
-// Matches AudioServer.py's AudioServerOutput_Websocket.SAMPLES_PER_FRAME (~250ms).
-constexpr size_t kSamplesPerFrame = AUDIO_SAMPLERATE / 4;
+// Batched (rather than firing a WS message per ~1ms AudioMixer tick) to avoid the original
+// message-spam bug - see the note on outputBuffer_ in the header. 50ms keeps latency low while
+// still batching well below that original per-tick granularity (~20 messages/sec here).
+constexpr size_t kSamplesPerFrame = AUDIO_SAMPLERATE / 20;
 } // namespace
 
 AudioOutputWebsocket::AudioOutputWebsocket(std::string host, int port)
