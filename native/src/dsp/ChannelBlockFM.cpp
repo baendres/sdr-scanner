@@ -83,6 +83,8 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     blockCtcssSquelch_ = gr::analog::ctcss_squelch_ff::make(
         fmQuadRate_, static_cast<float>(ctcssToneHz_.value_or(100.0)), 0.0f, 0, 0, false);
     applyCtcssLevel();
+    blockCtcssSquelchSink_ = gr::blocks::null_sink::make(sizeof(float));
+    blockCtcssGate_ = gr::blocks::mute_ff::make(false);
 
     ///
     // Audio filter + gain
@@ -107,8 +109,12 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     connect(blockFreqXlatingFilter_, 0, blockPowerSquelch_, 0);
     connect(blockPowerSquelch_, 0, blockQuadDemod_, 0);
     connect(blockQuadDemod_, 0, blockDeemph_, 0);
+    // blockCtcssSquelch_ is a side tap (status only, see the header note) - the real audio path
+    // runs through blockCtcssGate_ instead, which we drive explicitly from getStatus().
     connect(blockDeemph_, 0, blockCtcssSquelch_, 0);
-    connect(blockCtcssSquelch_, 0, blockAudioFilter_, 0);
+    connect(blockCtcssSquelch_, 0, blockCtcssSquelchSink_, 0);
+    connect(blockDeemph_, 0, blockCtcssGate_, 0);
+    connect(blockCtcssGate_, 0, blockAudioFilter_, 0);
     connect(blockAudioFilter_, 0, blockAudioGain_, 0);
     connect(blockAudioGain_, 0, blockAudioMute_, 0);
 
@@ -163,6 +169,10 @@ ChannelStatus ChannelBlockFM::getStatus() {
     // CTCSS only gates when actually configured (and never overrides forceActive) - see the
     // note in applyCtcssLevel() for why we don't rely on level==0 to mean "always passes".
     bool ctcssOk = forceActive_ || !ctcssToneHz_.has_value() || blockCtcssSquelch_->unmuted();
+    // Drive the real inline gate from this same decision (see the header note on
+    // blockCtcssGate_/blockCtcssSquelch_) - this is polled roughly every ms from the
+    // receiver's scheduling loop, plenty responsive for a sub-audible tone gate.
+    blockCtcssGate_->set_mute(!ctcssOk);
     bool unmuted = blockPowerSquelch_->unmuted() && ctcssOk;
     return computeAndReportStatus(unmuted);
 }

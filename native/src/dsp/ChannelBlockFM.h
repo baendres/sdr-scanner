@@ -10,6 +10,8 @@
 #include <gnuradio/blocks/complex_to_mag_squared.h>
 #include <gnuradio/filter/single_pole_iir_filter_ff.h>
 #include <gnuradio/blocks/keep_one_in_n.h>
+#include <gnuradio/blocks/mute.h>
+#include <gnuradio/blocks/null_sink.h>
 
 #include "ChannelBlockBase.h"
 
@@ -48,9 +50,15 @@ public:
 
 private:
     // The CTCSS block is always present in the chain (simpler + avoids ever needing to stop
-    // the flowgraph to add/remove a block). Its unmuted() is only consulted from getStatus()
-    // when CTCSS is actually configured - see the note on applyCtcssLevel()'s definition for
-    // why "set level to 0" alone isn't a reliable way to make it a no-op.
+    // the flowgraph to add/remove a block). It's wired as a side tap (fed the same signal, but
+    // not inline in the real audio path) purely so its unmuted() reading is available to
+    // getStatus() - gr::analog::ctcss_squelch_ff has no "detect only" mode, it always zeroes or
+    // truncates its own output when it doesn't consider itself unmuted (see its header: "gate
+    // or zero output if CTCSS tone not present"), which would silently mute all real audio
+    // whenever CTCSS isn't configured (level=0 is not a reliable "always pass", see
+    // applyCtcssLevel()) if it were left inline. blockCtcssGate_ is the actual inline gate,
+    // driven explicitly from getStatus()'s already-computed ctcssOk so there's one source of
+    // truth for the gating decision.
     void applyCtcssLevel();
 
     int deviation_hz_;
@@ -62,7 +70,11 @@ private:
     gr::analog::pwr_squelch_cc::sptr blockPowerSquelch_;
     gr::analog::quadrature_demod_cf::sptr blockQuadDemod_;
     gr::filter::iir_filter_ffd::sptr blockDeemph_;
-    gr::analog::ctcss_squelch_ff::sptr blockCtcssSquelch_; // always present; see applyCtcssLevel()
+    gr::analog::ctcss_squelch_ff::sptr blockCtcssSquelch_; // side tap only - see the note above
+    gr::blocks::null_sink::sptr blockCtcssSquelchSink_; // discards blockCtcssSquelch_'s output -
+                                                          // GNU Radio requires every output port
+                                                          // connected; we only want its unmuted()
+    gr::blocks::mute_ff::sptr blockCtcssGate_; // the real inline gate, driven from getStatus()
     gr::filter::fir_filter_fff::sptr blockAudioFilter_;
     gr::blocks::multiply_const_ff::sptr blockAudioGain_;
 

@@ -12,6 +12,7 @@
 #include <gnuradio/blocks/add_blk.h>
 #include <gnuradio/blocks/head.h>
 #include <gnuradio/blocks/null_sink.h>
+#include <gnuradio/blocks/vector_sink.h>
 
 #include "../src/dsp/ChannelBlockFM.h"
 
@@ -81,4 +82,44 @@ TEST_CASE("ChannelBlockFM forceActive opens squelch regardless of signal strengt
     tb->run();
 
     CHECK(channel->getStatus() == ChannelStatus::FORCE_ACTIVE);
+}
+
+TEST_CASE("ChannelBlockFM passes real audio through when CTCSS is not configured") {
+    // Regression test: gr::analog::ctcss_squelch_ff has no "detect only" mode - it always
+    // zeroes its own output when it doesn't consider itself unmuted, and a signal with no
+    // literal tone at the (arbitrary, unused) analysis frequency essentially never reads
+    // unmuted() there. Leaving it inline in the real audio path when CTCSS isn't configured
+    // silently zeroed all audio despite squelch being open and getStatus() correctly reporting
+    // ACTIVE - status "looked" fine while the channel was actually deaf. This must go through
+    // getStatus() at least once (it's what drives the real inline gate - see ChannelBlockFM.h).
+    constexpr int rfSampleRate = 240'000;
+    constexpr int audioSampleRate = 16'000;
+
+    auto tb = gr::make_top_block("test-ctcss-off-passthrough");
+    auto carrier = gr::analog::sig_source_c::make(rfSampleRate, gr::analog::GR_COS_WAVE, 1000.0, 1.0f);
+    auto noise = gr::analog::noise_source_c::make(gr::analog::GR_GAUSSIAN, 1e-3, 42);
+    auto add = gr::blocks::add_cc::make(1);
+    auto head = gr::blocks::head::make(sizeof(gr_complex), rfSampleRate / 4); // 0.25s
+    auto sink = gr::blocks::vector_sink_f::make();
+
+    auto channel = gnuradio::make_block_sptr<ChannelBlockFM>(
+        "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
+        /*squelchThreshold_dB=*/-20.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
+        /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
+        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, [](ChannelStatusUpdate) {});
+
+    tb->connect(carrier, 0, add, 0);
+    tb->connect(noise, 0, add, 1);
+    tb->connect(add, 0, head, 0);
+    tb->connect(head, 0, channel, 0);
+    tb->connect(channel, 0, sink, 0);
+
+    tb->run();
+    CHECK(channel->getStatus() == ChannelStatus::ACTIVE);
+
+    const auto& samples = sink->data();
+    REQUIRE(!samples.empty());
+    double energy = 0.0;
+    for (float s : samples) energy += static_cast<double>(s) * s;
+    CHECK(energy > 0.0);
 }
