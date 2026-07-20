@@ -2,6 +2,7 @@
 #include "AudioOutputLocal.h"
 #include "AudioOutputUdp.h"
 #include "AudioOutputWebsocket.h"
+#include "AudioOutputIcecast.h"
 
 #include <nlohmann/json.hpp>
 
@@ -37,6 +38,11 @@ std::shared_ptr<AudioOutput> createAudioOutput(const OutputConfig& cfg) {
         std::string host = j.value("host", "0.0.0.0");
         int port = j.value("port", 8123);
         return std::make_shared<AudioOutputWebsocket>(host, port);
+    }
+    if (type == "icecast") {
+        std::string url = j.at("url").get<std::string>(); // required - no sane default
+        std::string password = j.value("password", "");
+        return std::make_shared<AudioOutputIcecast>(url, password);
     }
 
     throw std::runtime_error("Unknown audio output type: " + cfg.type);

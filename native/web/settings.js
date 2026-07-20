@@ -192,11 +192,16 @@ function outputConfigEditor(type, config) {
     const port = el("input", { type: "number", value: config.port != null ? config.port : 8123, placeholder: "port" });
     return { fields: el("div", { className: "out-config-fields" }, [host, port]), getConfig: () => ({ host: host.value, port: parseInt(port.value, 10) }) };
   }
+  if (type === "icecast") {
+    const url = el("input", { type: "text", value: config.url || "", placeholder: "http://host:port/mount" });
+    const password = el("input", { type: "password", value: config.password || "", placeholder: "source password" });
+    return { fields: el("div", { className: "out-config-fields" }, [url, password]), getConfig: () => ({ url: url.value, password: password.value }) };
+  }
   return { fields: el("span", { className: "hint", text: "(no config needed)" }), getConfig: () => ({}) };
 }
 
 function renderOutputRow(oc) {
-  const type = el("select", {}, ["local", "udp", "websocket"].map(t => el("option", { value: t, text: t, selected: t === oc.type })));
+  const type = el("select", {}, ["local", "udp", "websocket", "icecast"].map(t => el("option", { value: t, text: t, selected: t === oc.type })));
   const configCell = el("td", {});
   let editor = outputConfigEditor(oc.type, oc.config);
   configCell.appendChild(editor.fields);

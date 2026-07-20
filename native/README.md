@@ -27,8 +27,9 @@ This is a working foundation, not full feature parity with the Python app yet:
 
 - **Implemented**: SQLite config + live control API, RTL-SDR/Soapy receivers, FM/NFM/AM
   demod, CTCSS squelch, multi-receiver scan-window scheduling, audio mixing with Local
-  (PortAudio) / UDP / WebSocket outputs, the web UI.
-- **Deferred** (see below): NOAA/BFM_EAS/SSB modes, Icecast output, DMR/P25.
+  (PortAudio) / UDP / WebSocket / Icecast outputs, the web UI (including a settings page for
+  editing channels/receivers/outputs).
+- **Deferred** (see below): NOAA/BFM_EAS/SSB modes, DMR/P25.
 
 ## Building
 
@@ -41,7 +42,7 @@ GNU Radio from source:
 sudo apt-get install build-essential cmake pkg-config gnuradio-dev \
     libboost-dev libsqlite3-dev nlohmann-json3-dev portaudio19-dev \
     libsoapysdr-dev soapysdr-module-all soapysdr-module-rtlsdr rtl-sdr librtlsdr-dev \
-    libyaml-cpp-dev catch2
+    libyaml-cpp-dev libmp3lame-dev catch2
 
 cmake -B build -DCMAKE_BUILD_TYPE=Release .
 cmake --build build -j$(nproc)
@@ -172,8 +173,6 @@ handle it at a reverse-proxy layer in front of this.
 
 - **NOAA / BFM_EAS / SSB channel modes** - same `ChannelBlockBase` extension point as
   `ChannelBlockFM`/`ChannelBlockAM`; straightforward follow-ups.
-- **Icecast audio output** - needs `libmp3lame`; same `AudioOutput` interface as the
-  implemented outputs makes it a small addition.
 - **wxPython GUI** - dropped in favor of the web UI (the Python repo's own README already
   listed this as a TODO).
 - **DMR/P25** - per the original request, deferred entirely. If tackled later, realistically

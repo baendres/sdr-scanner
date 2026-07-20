@@ -21,8 +21,8 @@ public:
     virtual void send(const std::vector<int16_t>& samples) = 0;
 };
 
-// Factory implemented in the AudioOutput*.cpp files (local | udp | websocket). Throws if
-// `cfg.type` is unrecognized. (Icecast is a deferred follow-up - see native/README.md.)
+// Factory implemented in the AudioOutput*.cpp files (local | udp | websocket | icecast).
+// Throws if `cfg.type` is unrecognized.
 std::shared_ptr<AudioOutput> createAudioOutput(const OutputConfig& cfg);
 
 } // namespace sdrscan

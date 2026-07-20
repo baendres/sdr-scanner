@@ -16,6 +16,13 @@ find_package(Gnuradio "3.10" REQUIRED COMPONENTS runtime analog blocks filter ff
 pkg_check_modules(PORTAUDIO REQUIRED portaudio-2.0)
 pkg_check_modules(SOAPYSDR REQUIRED SoapySDR)
 
+# libmp3lame ships no pkg-config file, so find it manually (apt install libmp3lame-dev).
+find_path(MP3LAME_INCLUDE_DIR NAMES lame/lame.h)
+find_library(MP3LAME_LIBRARY NAMES mp3lame)
+if(NOT MP3LAME_INCLUDE_DIR OR NOT MP3LAME_LIBRARY)
+    message(FATAL_ERROR "libmp3lame not found (needed for the Icecast audio output) - apt install libmp3lame-dev")
+endif()
+
 set(GNURADIO_LIBS
     gnuradio::gnuradio-runtime
     gnuradio::gnuradio-analog
@@ -44,6 +51,7 @@ add_library(sdrscan_core STATIC
     src/audio/AudioOutputLocal.cpp
     src/audio/AudioOutputUdp.cpp
     src/audio/AudioOutputWebsocket.cpp
+    src/audio/AudioOutputIcecast.cpp
     src/control/HttpServer.cpp
     src/scanner/Scanner.cpp
 )
@@ -53,6 +61,7 @@ target_include_directories(sdrscan_core PUBLIC
     ${SQLite3_INCLUDE_DIRS}
     ${PORTAUDIO_INCLUDE_DIRS}
     ${SOAPYSDR_INCLUDE_DIRS}
+    ${MP3LAME_INCLUDE_DIR}
 )
 
 target_link_libraries(sdrscan_core PUBLIC
@@ -63,6 +72,7 @@ target_link_libraries(sdrscan_core PUBLIC
     Threads::Threads
     ${PORTAUDIO_LIBRARIES}
     ${SOAPYSDR_LIBRARIES}
+    ${MP3LAME_LIBRARY}
 )
 
 target_compile_options(sdrscan_core PUBLIC ${PORTAUDIO_CFLAGS_OTHER} ${SOAPYSDR_CFLAGS_OTHER})

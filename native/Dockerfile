@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsoapysdr-dev soapysdr-module-all soapysdr-module-rtlsdr \
     rtl-sdr librtlsdr-dev \
     libyaml-cpp-dev \
+    libmp3lame-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
