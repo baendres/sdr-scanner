@@ -19,22 +19,32 @@ std::shared_ptr<ChannelBlockBase> buildChannelBlock(const ChannelConfig& cc,
                                                       int rfSampleRate,
                                                       int audioSampleRate,
                                                       std::function<void(ChannelStatusUpdate)> statusCallback) {
+    std::shared_ptr<ChannelBlockBase> block;
     switch (cc.mode) {
         case ChannelMode::FM:
         case ChannelMode::NFM: {
             int deviation_hz = (cc.mode == ChannelMode::NFM) ? 2500 : 5000;
-            return gnuradio::make_block_sptr<ChannelBlockFM>(
+            block = gnuradio::make_block_sptr<ChannelBlockFM>(
                 cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
                 cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
                 deviation_hz, cc.ctcssToneHz, statusCallback);
+            break;
         }
         case ChannelMode::AM:
-            return gnuradio::make_block_sptr<ChannelBlockAM>(
+            block = gnuradio::make_block_sptr<ChannelBlockAM>(
                 cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
                 cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
                 statusCallback);
+            break;
+        default:
+            throw std::runtime_error("buildChannelBlock: unhandled ChannelMode");
     }
-    throw std::runtime_error("buildChannelBlock: unhandled ChannelMode");
+    // forceActive is runtime-only (not a constructor param - see ChannelConfig::forceActive)
+    // and defaults false on every fresh block, so it has to be re-applied explicitly here or a
+    // rebuild (any structural config change, e.g. re-enabling a channel, adding another one)
+    // silently drops a live "Force Active" back to normal squelch gating.
+    block->setForceActive(cc.forceActive);
+    return block;
 }
 
 } // namespace
