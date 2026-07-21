@@ -57,6 +57,10 @@ Notes:
   this one (see the note on `docker-compose.yaml`'s `restart` line). Running the bare binary
   directly (the "Local" section below) has no restart policy at all, so the button just stops
   the process there.
+- `name: sdr-scanner-native` pins the Compose project name so it doesn't shift if you ever
+  rename the checkout directory - Compose otherwise derives the project name (and therefore
+  the image/container names) from the directory name, so a rename looks like a brand-new
+  project and triggers a full rebuild.
 
 ### Local (fast dev loop)
 

@@ -1,3 +1,5 @@
+name: sdr-scanner-native
+
 services:
   sdr_scanner_native:
     build: .
