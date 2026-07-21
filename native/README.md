@@ -148,10 +148,15 @@ Two tiers:
 - **Database-only** (receivers, audio outputs): these are read once at startup, so edits take
   effect on the next process restart, not live. The settings page shows a "restart needed"
   banner with a **Restart Now** button (`POST /api/restart`) once you've made one of these
-  changes - it requests a graceful shutdown (the same path SIGTERM/Ctrl+C use) and relies on
-  the deployment's restart policy (docker-compose's `restart: unless-stopped`, see
-  `native/docker-compose.yaml`) to bring the process back up with the new config loaded.
-  Running the binary directly with no restart policy means that button just stops it.
+  changes - it requests a graceful shutdown (the same path SIGTERM/Ctrl+C use) but exits with a
+  distinct non-zero code, and relies on the deployment's restart policy (docker-compose's
+  `restart: on-failure`, see `native/docker-compose.yaml`) to bring the process back up with
+  the new config loaded. Running the binary directly with no restart policy means that button
+  just stops it. To make a receiver easier to find in the first place, `GET
+  /api/receivers/scan` enumerates connected SDR hardware for the settings page's **Scan for
+  Receivers** button - and starting the process with zero receivers configured (e.g. a brand
+  new database) is itself a valid state now, specifically so the web UI comes up far enough to
+  use that button on a first-time setup.
 
 ### CTCSS squelch
 
@@ -209,6 +214,11 @@ unaffected.
   squelchThreshold?, ctcssToneHz?}` -> `{id}`.
 - `DELETE /api/channels/{id}`
 - `PATCH /api/scanner` - body: `{maxChannelsPerWindow}`
+- `GET /api/receivers/scan` - enumerates connected SDR hardware (`SoapySDR::Device::enumerate()`
+  across every installed driver module) -> `{devices: [{driver, label, serial, args}]}`. Used
+  by the settings page's **Scan for Receivers** button; safe to call with nothing plugged in
+  (returns `{devices: []}`).
+- `POST /api/restart` - the settings page's **Restart Now** button (see "Database-only" above).
 
 `GET /ws` (WebSocket): sends a `Snapshot` on connect, then broadcasts `ChannelConfig` /
 `ChannelStatus` / `ScanWindowStart` / `ScanWindowDone` / `ScanWindowConfigsChanged` messages.

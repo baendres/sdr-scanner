@@ -176,6 +176,65 @@ async function addReceiver() {
   } catch (e) { log(`add receiver failed: ${e.message}`); }
 }
 
+// Devices already configured are identified the same way SoapyReceiver itself builds a
+// device's driver string (see SoapyReceiver.cpp) - by (driver, deviceArg) pair, deviceArg
+// standing in for the discovered device's serial when present.
+function isReceiverAlreadyConfigured(existingReceivers, driver, deviceArg) {
+  return existingReceivers.some(rc => {
+    const rcDriver = rc.type === "RTL-SDR" ? "rtlsdr" : (rc.driver || "");
+    return rcDriver === driver && (rc.deviceArg || "") === (deviceArg || "");
+  });
+}
+
+function renderScanResultRow(device, existingReceivers) {
+  const deviceArg = device.serial ? `serial=${device.serial}` : "";
+  const alreadyAdded = isReceiverAlreadyConfigured(existingReceivers, device.driver, deviceArg);
+
+  const meta = el("span", { className: "scan-result-meta", text: device.driver + (device.serial ? ` · serial ${device.serial}` : "") });
+  const label = el("span", { text: device.label || device.driver || "(unknown device)" });
+  const left = el("div", {}, [label, document.createElement("br"), meta]);
+
+  const addBtn = el("button", { className: "btn", text: alreadyAdded ? "Already added" : "Add" });
+  addBtn.disabled = alreadyAdded;
+  addBtn.addEventListener("click", async () => {
+    try {
+      await api("POST", "/api/receivers", {
+        type: device.driver === "rtlsdr" ? "RTL-SDR" : "SOAPY",
+        deviceArg: deviceArg || null,
+        driver: device.driver || null,
+        gain: null,
+      });
+      log(`added receiver from scan: ${device.label || device.driver} (restart to apply)`);
+      await loadAll();
+      await scanForReceivers();
+    } catch (e) { log(`add receiver failed: ${e.message}`); }
+  });
+
+  return el("div", { className: "scan-result-row" }, [left, addBtn]);
+}
+
+async function scanForReceivers() {
+  const resultsEl = document.getElementById("scanResults");
+  const btn = document.getElementById("btnScanReceivers");
+  btn.disabled = true;
+  btn.textContent = "Scanning...";
+  try {
+    const { devices } = await api("GET", "/api/receivers/scan");
+    const state = await api("GET", "/api/state");
+    if (devices.length === 0) {
+      resultsEl.replaceChildren(el("p", { className: "hint", text: "No SDR hardware found." }));
+    } else {
+      resultsEl.replaceChildren(...devices.map(d => renderScanResultRow(d, state.receivers)));
+    }
+    log(`scan found ${devices.length} device(s)`);
+  } catch (e) {
+    log(`scan failed: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Scan for Receivers";
+  }
+}
+
 ///
 // Outputs
 
@@ -331,6 +390,7 @@ async function loadAll() {
 (async function init() {
   document.getElementById("btnAddChannel").addEventListener("click", addChannel);
   document.getElementById("btnAddReceiver").addEventListener("click", addReceiver);
+  document.getElementById("btnScanReceivers").addEventListener("click", scanForReceivers);
   document.getElementById("btnAddOutput").addEventListener("click", addOutput);
   document.getElementById("btnRestartNow").addEventListener("click", restartNow);
   wireNewOutputTypeSelector();

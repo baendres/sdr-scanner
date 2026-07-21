@@ -3,6 +3,7 @@
 #include "../util/Time.h"
 
 #include <gnuradio/soapy/soapy_types.h>
+#include <SoapySDR/Device.hpp>
 
 #include <iostream>
 #include <set>
@@ -53,6 +54,18 @@ SoapyReceiver::SoapyReceiver(ReceiverConfig config,
     } else {
         source_->set_gain(0, config_.gain.value_or(20.0));
     }
+}
+
+std::vector<std::map<std::string, std::string>> SoapyReceiver::scanAvailableDevices() {
+    std::vector<std::map<std::string, std::string>> devices;
+    try {
+        for (const auto& kwargs : SoapySDR::Device::enumerate()) {
+            devices.emplace_back(kwargs.begin(), kwargs.end());
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "SoapyReceiver::scanAvailableDevices: enumeration failed: " << e.what() << "\n";
+    }
+    return devices;
 }
 
 std::vector<int> SoapyReceiver::getSampleRates() {

@@ -1,5 +1,6 @@
 #include "HttpServer.h"
 #include "Protocol.h"
+#include "../receiver/SoapyReceiver.h"
 
 #include <algorithm>
 #include <chrono>
@@ -188,6 +189,22 @@ void HttpServer::handleConnection(tcp::socket socket) {
                             scanner_.setMaxChannelsPerWindow(body.at("maxChannelsPerWindow").get<int>());
                         }
                         res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"ok", true}});
+                    } else if (req.method() == http::verb::get && path == "/api/receivers/scan") {
+                        nlohmann::json devices = nlohmann::json::array();
+                        for (const auto& kwargs : SoapyReceiver::scanAvailableDevices()) {
+                            nlohmann::json args = nlohmann::json::object();
+                            for (const auto& [k, v] : kwargs) args[k] = v;
+                            auto it = kwargs.find("driver");
+                            auto labelIt = kwargs.find("label");
+                            auto serialIt = kwargs.find("serial");
+                            devices.push_back(nlohmann::json{
+                                {"driver", it != kwargs.end() ? it->second : ""},
+                                {"label", labelIt != kwargs.end() ? labelIt->second : ""},
+                                {"serial", serialIt != kwargs.end() ? serialIt->second : nullptr},
+                                {"args", args},
+                            });
+                        }
+                        res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"devices", devices}});
                     } else if (req.method() == http::verb::post && path == "/api/receivers") {
                         auto rc = protocol::receiverConfigFromJson(haveBody ? body : nlohmann::json::object());
                         std::string id = scanner_.upsertReceiverConfig(rc);

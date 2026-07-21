@@ -31,3 +31,16 @@
 .row-btns .btn { padding: 4px 8px; font-size: 12px; }
 .out-config-fields { display: flex; gap: 4px; }
 .out-config-fields input { width: auto; flex: 1; }
+
+#scanResults { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.scan-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  font-size: 13px;
+}
+.scan-result-row .scan-result-meta { color: #6b7280; font-size: 12px; }

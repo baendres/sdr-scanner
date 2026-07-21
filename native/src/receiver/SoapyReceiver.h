@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -57,6 +58,15 @@ public:
     const ReceiverConfig& config() const { return config_; }
 
     std::vector<int> getSampleRates();
+
+    // Enumerates connected SDR hardware across every installed SoapySDR driver module
+    // (RTL-SDR, HackRF, LimeSDR, ...) - each entry is a device's raw SoapySDR args (driver,
+    // label, serial, etc, whatever that driver module reports). Used by the settings page's
+    // "Scan for Receivers" button so a device can be discovered and added without knowing
+    // SoapySDR device-arg syntax up front. Static: a pure hardware query, no receiver instance
+    // needed. Never throws - a failing/misbehaving driver module is logged and skipped rather
+    // than taking down the whole scan (and the caller, e.g. the HTTP request handling it).
+    static std::vector<std::map<std::string, std::string>> scanAvailableDevices();
 
     // Thread-safe: queues new scan window configs for this receiver's run() loop to pick up.
     // Rebuilding scan windows is a flowgraph topology change, so it's confined to the thread

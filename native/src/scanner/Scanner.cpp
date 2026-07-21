@@ -29,10 +29,13 @@ void Scanner::loadConfigFromDatabase() {
 }
 
 void Scanner::start() {
-    if (receiverConfigs_.empty()) {
-        throw std::runtime_error("Scanner: no receivers configured");
-    }
-
+    // Zero receivers is a valid (if useless) starting state - notably including a fresh
+    // database on first run. Scanner still starts (audioMixer_ with zero input streams just
+    // mixes silence, buildWindows() no-ops on an empty receivers_), so the web UI comes up and
+    // a receiver can be added/enabled through it - see native/README.md and the settings
+    // page's "Scan for Receivers" button. Previously this threw here, which meant the process
+    // - including the HTTP server - never started at all without at least one receiver already
+    // in the database, a chicken-and-egg problem for a first-time setup.
     std::vector<std::shared_ptr<AudioOutput>> outputs;
     for (const auto& oc : outputConfigs_) {
         if (!oc.enabled) continue;
