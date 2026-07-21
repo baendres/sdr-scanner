@@ -2,6 +2,8 @@
 
 #include <gnuradio/soapy/source.h>
 #include <gnuradio/top_block.h>
+#include <gnuradio/blocks/selector.h>
+#include <gnuradio/blocks/null_sink.h>
 
 #include <atomic>
 #include <functional>
@@ -14,7 +16,6 @@
 #include "../config/Types.h"
 #include "../dsp/ScanWindow.h"
 #include "../audio/AudioMixer.h"
-#include "RfRingBuffer.h"
 
 namespace sdrscan {
 
@@ -29,6 +30,23 @@ namespace sdrscan {
 // DSP blocks, since a GNU Radio block instance can't be shared across flowgraphs/threads).
 // Scanner is responsible for fanning "hot" control updates (mute, squelch, ...) out to every
 // receiver's copy via withChannel().
+//
+// Window hopping architecture: every configured scan window's DSP chain is built and wired
+// into ONE persistent flowgraph at once (source_ -> rfSelector_ -> each window's block ->
+// audioSelector_ -> audioSink_), rather than rebuilding a flowgraph per hop. Hopping is then
+// just flipping both selectors' live index (gr::blocks::selector::set_input_index/
+// set_output_index, safe to call while running - the same mechanism squelch/gain live
+// updates already use), with zero GNU Radio topology change and zero USB stream
+// re-negotiation on the hardware source. Ported from Receiver.py's post-fork
+// "one large block with all windows and selectors" rework (upstream commit 54a5ac4) - a
+// cleaner solution to the same problem an earlier version of this class solved with a custom
+// RfRingBuffer bridging two separate flowgraphs; that approach is gone now that hopping never
+// touches the flowgraph containing the hardware source at all.
+//
+// The one thing that *does* still require stopping/restarting the whole flowgraph (hardware
+// included) is a structural change to the window set itself (a channel/receiver add, remove,
+// or edit) - rare compared to hopping, so paying the USB re-negotiation cost there is a fine
+// trade.
 class SoapyReceiver {
 public:
     SoapyReceiver(ReceiverConfig config,
@@ -63,7 +81,13 @@ public:
 private:
     std::shared_ptr<ScanWindow> buildWindow(const ScanWindowConfig& cfg);
     void applyPendingConfigsIfAny();
-    bool startWindow(const std::string& windowId); // false if the window vanished (config race)
+    // Tears down and rebuilds the entire flowgraph (source_ persists; everything downstream of
+    // it is fresh) around the given window set. Safe to call with an empty vector (leaves the
+    // graph torn down and unbuilt - run()'s loop just idles until real configs arrive).
+    void rebuildGraph(std::vector<ScanWindowConfig> configs);
+    void ensureRunning();
+    void shutdownGraph();
+    bool startWindow(const std::string& windowId); // false if the window vanished (config race) or a hardware error occurred
     void stopCurrentWindow();
     void checkCurrentWindow();
 
@@ -73,33 +97,24 @@ private:
 
     gr::soapy::source::sptr source_;
     std::optional<std::vector<int>> cachedSampleRates_;
+    int lastSetSampleRate_ = 0; // avoids a ~100ms hardware sample-rate reset on every hop when consecutive windows share a rate
 
-    // Two separate flowgraphs, bridged through an RfRingBuffer (see RfRingBuffer.h for the
-    // full "why" - short version: stopping/restarting *any* flowgraph containing the hardware
-    // source, even via topBlock_->lock()/unlock(), forces GNU Radio to stop+restart every
-    // block in it including the source, which forces the driver to fully re-negotiate the USB
-    // stream. Splitting into two flowgraphs means the one with the hardware source never gets
-    // touched again after its first start(), no matter how often the processing side gets
-    // reconfigured for a window hop).
-    //
-    // captureTopBlock_: source_ -> rfRingBufferSink_. Started exactly once, never stopped
-    // again until receiver shutdown.
-    gr::top_block_sptr captureTopBlock_;
-    std::shared_ptr<RfRingBuffer> rfRingBuffer_;
-    std::shared_ptr<RfRingBufferSinkBlock> rfRingBufferSink_;
-    bool captureStarted_ = false;
-
-    // windowTopBlock_: rfRingBufferSource_ -> current window's block -> audioSink_. Freely
-    // stopped/reconfigured/restarted on every window hop - cheap, since it touches no
-    // hardware at all.
-    gr::top_block_sptr windowTopBlock_;
-    std::shared_ptr<RfRingBufferSourceBlock> rfRingBufferSource_;
+    // Rebuilt from scratch (a fresh top_block, discarding the old one) on every structural
+    // change - see the class comment. Null/unbuilt whenever no windows are configured yet.
+    gr::top_block_sptr receiverTopBlock_;
+    gr::blocks::selector::sptr rfSelector_;    // 1 input (source_), N+1 outputs (one per window + discard)
+    gr::blocks::selector::sptr audioSelector_; // N inputs (one per window), 1 output (audioSink_)
+    gr::blocks::null_sink::sptr rfDiscardSink_;
+    int rfDiscardPortIndex_ = -1;
+    bool graphBuilt_ = false;
+    bool graphRunning_ = false;
 
     std::mutex mailboxMutex_;
     std::optional<std::vector<ScanWindowConfig>> pendingConfigs_;
 
-    std::mutex windowsMutex_; // guards scanWindowsById_ (read by withChannel from any thread)
+    std::mutex windowsMutex_; // guards scanWindowsById_/scanWindowIndexById_ (read by withChannel from any thread)
     std::unordered_map<std::string, std::shared_ptr<ScanWindow>> scanWindowsById_;
+    std::unordered_map<std::string, int> scanWindowIndexById_; // window id -> selector port index
 
     std::shared_ptr<ScanWindow> currentWindow_;
     double windowTimeout_ = 0.0;

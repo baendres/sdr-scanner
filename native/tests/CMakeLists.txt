@@ -12,9 +12,9 @@ add_executable(sdrscan_tests
     test_database.cpp
     test_channel_fm.cpp
     test_ctcss_squelch.cpp
-    test_rf_ring_buffer.cpp
     test_scanner_config.cpp
     test_icecast_output.cpp
+    test_selector_hop.cpp
 )
 target_link_libraries(sdrscan_tests PRIVATE sdrscan_core Catch2::Catch2WithMain)
 

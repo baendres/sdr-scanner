@@ -91,7 +91,11 @@ Single process, multiple threads (see also the comment block at the top of
 - **Main thread**: loads config from SQLite, runs `Scanner`'s maintenance loop (re-enables
   channels whose temporary disable has expired).
 - **One thread per receiver** (`SoapyReceiver::run`): owns that receiver's `gr::top_block`,
-  round-robins between its `ScanWindow`s, starts/stops them as they become active/idle.
+  which has *every* configured `ScanWindow` wired into it at once (source -> RF `selector` ->
+  each window's demod chain -> audio `selector` -> the audio sink). The thread round-robins
+  between windows by flipping both selectors' live index - no flowgraph stop/restart, no USB
+  re-negotiation on the hardware source. Only a structural change to the window set itself
+  (add/remove/edit a channel or receiver) tears down and rebuilds this flowgraph.
 - **One audio mixer thread** (`AudioMixer::run`): drains each receiver's ring buffer, mixes,
   fans out to the configured `AudioOutput`s.
 - **HTTP server threads** (`HttpServer`, Boost.Beast, thread-per-connection): REST API,

@@ -4,8 +4,10 @@
 
 #include <gnuradio/soapy/soapy_types.h>
 
+#include <iostream>
 #include <set>
 #include <stdexcept>
+#include <thread>
 
 namespace sdrscan {
 
@@ -13,11 +15,6 @@ namespace {
 // Curated list matching Receiver.py's Receiver_RTLSDR.SAMPLE_RATES - rates known to decimate
 // down cleanly, rather than trusting the RTL-SDR's raw (misleadingly continuous) reported range.
 const std::vector<int> kRtlSdrSampleRates = {1'024'000, 1'536'000, 1'792'000, 1'920'000, 2'048'000};
-
-// ~0.5s of headroom at the highest RF rate this app will ever configure - generous enough to
-// absorb the brief gap while windowTopBlock_ is being reconfigured during a hop without ever
-// overflowing (see RfRingBuffer.h).
-constexpr size_t kRfRingBufferCapacity = static_cast<size_t>(MAX_RF_SAMPLERATE) / 2;
 } // namespace
 
 SoapyReceiver::SoapyReceiver(ReceiverConfig config,
@@ -56,15 +53,6 @@ SoapyReceiver::SoapyReceiver(ReceiverConfig config,
     } else {
         source_->set_gain(0, config_.gain.value_or(20.0));
     }
-
-    rfRingBuffer_ = std::make_shared<RfRingBuffer>(kRfRingBufferCapacity);
-
-    captureTopBlock_ = gr::make_top_block("SDR Capture " + config_.id);
-    rfRingBufferSink_ = std::make_shared<RfRingBufferSinkBlock>(rfRingBuffer_);
-    captureTopBlock_->connect(source_, 0, rfRingBufferSink_, 0);
-
-    windowTopBlock_ = gr::make_top_block("SDR Window " + config_.id);
-    rfRingBufferSource_ = std::make_shared<RfRingBufferSourceBlock>(rfRingBuffer_);
 }
 
 std::vector<int> SoapyReceiver::getSampleRates() {
@@ -128,46 +116,110 @@ void SoapyReceiver::applyPendingConfigsIfAny() {
     }
     if (!configs.has_value()) return;
 
-    if (windowRunning_) {
-        stopCurrentWindow();
+    rebuildGraph(std::move(*configs));
+}
+
+void SoapyReceiver::rebuildGraph(std::vector<ScanWindowConfig> configs) {
+    shutdownGraph();
+
+    if (configs.empty()) {
+        std::lock_guard<std::mutex> lock(windowsMutex_);
+        scanWindowsById_.clear();
+        scanWindowIndexById_.clear();
+        return;
     }
 
     std::unordered_map<std::string, std::shared_ptr<ScanWindow>> rebuilt;
-    for (const auto& cfg : *configs) {
+    for (const auto& cfg : configs) {
         rebuilt[cfg.id] = buildWindow(cfg);
     }
 
-    std::lock_guard<std::mutex> lock(windowsMutex_);
-    scanWindowsById_ = std::move(rebuilt);
+    // A fresh top_block each rebuild (rather than reusing one across rebuilds) means there's
+    // never a need to explicitly disconnect the previous topology - the old one, and every
+    // block exclusive to it, is simply destroyed once this local shared_ptr replaces it. source_
+    // is the only block that survives from the previous graph, and GNU Radio blocks are fine
+    // being wired into a new flowgraph once their old one has been fully stopped (shutdownGraph()
+    // above already guarantees that).
+    receiverTopBlock_ = gr::make_top_block("SDR " + config_.id);
+
+    int windowCount = static_cast<int>(rebuilt.size());
+    rfDiscardPortIndex_ = windowCount;
+    rfSelector_ = gr::blocks::selector::make(sizeof(gr_complex), 0, rfDiscardPortIndex_);
+    audioSelector_ = gr::blocks::selector::make(sizeof(float), 0, 0);
+    rfDiscardSink_ = gr::blocks::null_sink::make(sizeof(gr_complex));
+
+    receiverTopBlock_->connect(source_, 0, rfSelector_, 0);
+
+    std::unordered_map<std::string, int> indexById;
+    int idx = 0;
+    for (auto& [id, window] : rebuilt) {
+        indexById[id] = idx;
+        receiverTopBlock_->connect(rfSelector_, idx, window->block(), 0);
+        receiverTopBlock_->connect(window->block(), 0, audioSelector_, idx);
+        idx++;
+    }
+    receiverTopBlock_->connect(rfSelector_, rfDiscardPortIndex_, rfDiscardSink_, 0);
+    receiverTopBlock_->connect(audioSelector_, 0, audioSink_, 0);
+
+    {
+        std::lock_guard<std::mutex> lock(windowsMutex_);
+        scanWindowsById_ = std::move(rebuilt);
+        scanWindowIndexById_ = std::move(indexById);
+    }
+
+    graphBuilt_ = true;
+    ensureRunning();
+}
+
+void SoapyReceiver::ensureRunning() {
+    if (!graphRunning_ && receiverTopBlock_) {
+        receiverTopBlock_->start();
+        graphRunning_ = true;
+    }
+}
+
+void SoapyReceiver::shutdownGraph() {
+    if (graphRunning_ && receiverTopBlock_) {
+        receiverTopBlock_->stop();
+        receiverTopBlock_->wait();
+    }
+    graphRunning_ = false;
+    graphBuilt_ = false;
+    currentWindow_.reset();
+    windowRunning_ = false;
+    windowTimeout_ = 0.0;
+    rfDiscardPortIndex_ = -1;
+    rfSelector_.reset();
+    audioSelector_.reset();
+    rfDiscardSink_.reset();
+    receiverTopBlock_.reset();
 }
 
 bool SoapyReceiver::startWindow(const std::string& windowId) {
+    if (!graphBuilt_) return false; // no windows configured yet
+
     std::shared_ptr<ScanWindow> window;
+    int windowIdx = -1;
     {
         std::lock_guard<std::mutex> lock(windowsMutex_);
         auto it = scanWindowsById_.find(windowId);
         if (it == scanWindowsById_.end()) return false; // config changed out from under us; skip
         window = it->second;
+        auto idxIt = scanWindowIndexById_.find(windowId);
+        if (idxIt == scanWindowIndexById_.end()) return false; // shouldn't happen, but be defensive
+        windowIdx = idxIt->second;
     }
 
     try {
-        source_->set_frequency(0, window->hardwareFreq_hz());
-
-        if (!captureStarted_) {
-            // First window ever for this receiver: the USB/SDR stream doesn't exist yet, so
-            // this is the one time captureTopBlock_ (and therefore the hardware) actually
-            // starts. It is never stopped again until receiver shutdown - see the header
-            // comment.
+        if (window->rfSampleRate() != lastSetSampleRate_) {
+            // Changing sample rate takes ~100ms on real hardware - avoid it unless the newly
+            // selected window actually needs a different one (matches Receiver.py's
+            // _tuneSource optimization).
             source_->set_sample_rate(0, window->rfSampleRate());
-            captureTopBlock_->start();
-            captureStarted_ = true;
+            lastSetSampleRate_ = window->rfSampleRate();
         }
-
-        // windowTopBlock_ contains no hardware, so freely reconfiguring/restarting it per hop
-        // is cheap - no USB stream re-negotiation, unlike the capture side.
-        windowTopBlock_->connect(rfRingBufferSource_, 0, window->block(), 0);
-        windowTopBlock_->connect(window->block(), 0, audioSink_, 0);
-        windowTopBlock_->start();
+        source_->set_frequency(0, window->hardwareFreq_hz());
+        ensureRunning();
     } catch (const std::exception& e) {
         // GNU Radio/SoapySDR surface hardware and USB communication failures (a flaky I2C
         // write to the tuner, a dropped USB connection, ...) as exceptions - this must not be
@@ -182,6 +234,14 @@ bool SoapyReceiver::startWindow(const std::string& windowId) {
         return false;
     }
 
+    // Let the retuned signal settle before routing it into this window's squelch/demod chain -
+    // feeding it transitional/settling samples right after a retune can trip a false
+    // squelch-open or a demod glitch (matches Receiver.py's tunePause).
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    audioSelector_->set_input_index(windowIdx);
+    rfSelector_->set_output_index(windowIdx);
+
     currentWindow_ = window;
     windowTimeout_ = nowUnixSeconds() + currentWindow_->getMinimumScanTime();
     windowRunning_ = true;
@@ -193,10 +253,9 @@ void SoapyReceiver::stopCurrentWindow() {
         windowRunning_ = false;
         return;
     }
-    windowTopBlock_->stop();
-    windowTopBlock_->wait();
-    windowTopBlock_->disconnect(rfRingBufferSource_, 0, currentWindow_->block(), 0);
-    windowTopBlock_->disconnect(currentWindow_->block(), 0, audioSink_, 0);
+    // No GNU Radio topology change here - the flowgraph keeps running unchanged, this just
+    // stops routing real RF samples to any window (the discard port gets them instead).
+    if (rfSelector_) rfSelector_->set_output_index(rfDiscardPortIndex_);
     currentWindow_.reset();
     windowRunning_ = false;
 }
@@ -246,12 +305,7 @@ void SoapyReceiver::run(const std::function<std::string()>& nextWindowIdProvider
     }
 
     if (windowRunning_) stopCurrentWindow();
-
-    // The hardware capture flowgraph is only ever stopped here, at real receiver shutdown.
-    if (captureStarted_) {
-        captureTopBlock_->stop();
-        captureTopBlock_->wait();
-    }
+    shutdownGraph();
 }
 
 void SoapyReceiver::stop() {
