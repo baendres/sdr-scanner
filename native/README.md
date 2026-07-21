@@ -33,10 +33,31 @@ This is a working foundation, not full feature parity with the Python app yet:
 
 ## Building
 
+### Docker (recommended)
+
+The easiest way to run this - one command pulls in every dependency (GNU Radio, SoapySDR +
+the RTL-SDR driver, etc.), no manual `apt-get` list to keep in sync:
+
+```
+docker compose up -d --build
+```
+
+Notes:
+
+- `--privileged` + `/dev/bus/usb:/dev/bus/usb` (already in `docker-compose.yaml`) gives the
+  container USB access for RTL-SDR/SoapySDR hardware.
+- `./data` is mounted into the container for the SQLite database, so config (and any live
+  changes made through the API) survives `docker compose restart` / container recreation.
+- `restart: unless-stopped` is what makes the settings page's **Restart Now** button (see "The
+  'no restart' mechanism" below) actually bring the process back - it exits gracefully and
+  relies on this policy to relaunch it with the new receiver/output config loaded. Running the
+  bare binary directly (the "Local" section below) has no such policy, so that button would
+  just stop the process there.
+
 ### Local (fast dev loop)
 
-Ubuntu/Debian's `gnuradio-dev` package (3.10.x) has everything needed - no need to build
-GNU Radio from source:
+For iterating on the code itself. Ubuntu/Debian's `gnuradio-dev` package (3.10.x) has
+everything needed - no need to build GNU Radio from source:
 
 ```
 sudo apt-get install build-essential cmake pkg-config gnuradio-dev \
@@ -55,16 +76,6 @@ needed):
 ./build/tests/sdrscan_tests
 ```
 
-### Docker
-
-```
-docker compose build
-docker compose up
-```
-
-The container mounts `./data` for the SQLite database, so config (and any live changes made
-through the API) survives `docker compose restart` / container recreation.
-
 ## Migrating from the Python app's `sdrscan.yaml`
 
 ```
@@ -76,6 +87,9 @@ After that, the database is the source of truth - edit it through the control AP
 `sqlite3` CLI directly if you prefer), not by re-running the import.
 
 ## Running
+
+For the local/bare-binary build above (`docker compose up` already starts the container with
+the right flags - see "Docker (recommended)"):
 
 ```
 ./build/sdrscan -d sdrscan.db -w web --host 0.0.0.0 --port 8080
