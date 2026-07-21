@@ -192,17 +192,7 @@ void HttpServer::handleConnection(tcp::socket socket) {
                     } else if (req.method() == http::verb::get && path == "/api/receivers/scan") {
                         nlohmann::json devices = nlohmann::json::array();
                         for (const auto& kwargs : SoapyReceiver::scanAvailableDevices()) {
-                            nlohmann::json args = nlohmann::json::object();
-                            for (const auto& [k, v] : kwargs) args[k] = v;
-                            auto it = kwargs.find("driver");
-                            auto labelIt = kwargs.find("label");
-                            auto serialIt = kwargs.find("serial");
-                            devices.push_back(nlohmann::json{
-                                {"driver", it != kwargs.end() ? it->second : ""},
-                                {"label", labelIt != kwargs.end() ? labelIt->second : ""},
-                                {"serial", serialIt != kwargs.end() ? serialIt->second : nullptr},
-                                {"args", args},
-                            });
+                            devices.push_back(protocol::soapyDeviceToJson(kwargs));
                         }
                         res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"devices", devices}});
                     } else if (req.method() == http::verb::post && path == "/api/receivers") {

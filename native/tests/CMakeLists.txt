@@ -16,6 +16,7 @@ add_executable(sdrscan_tests
     test_scanner_config.cpp
     test_icecast_output.cpp
     test_selector_hop.cpp
+    test_protocol.cpp
 )
 target_link_libraries(sdrscan_tests PRIVATE sdrscan_core Catch2::Catch2WithMain)
 

@@ -14,6 +14,27 @@ using json = nlohmann::json;
 
 inline json triBoolToJson(TriBool v) { return v.has_value() ? json(*v) : json(nullptr); }
 
+// A discovered SoapySDR device's raw kwargs (see SoapyReceiver::scanAvailableDevices) as the
+// wire format the settings page's "Scan for Receivers" button expects. Not every driver module
+// reports every key - "serial" in particular is commonly absent - so this must not use a
+// ternary between a std::string and nullptr directly: nullptr there implicitly converts to
+// `const char*` (nullptr converts to any pointer type) and then constructs a std::string from
+// it, which is UB/throws at runtime. Wrapping both ternary branches in json(...) up front
+// avoids that entirely.
+inline json soapyDeviceToJson(const std::map<std::string, std::string>& kwargs) {
+    json args = json::object();
+    for (const auto& [k, v] : kwargs) args[k] = v;
+    auto driverIt = kwargs.find("driver");
+    auto labelIt = kwargs.find("label");
+    auto serialIt = kwargs.find("serial");
+    return json{
+        {"driver", driverIt != kwargs.end() ? driverIt->second : ""},
+        {"label", labelIt != kwargs.end() ? labelIt->second : ""},
+        {"serial", serialIt != kwargs.end() ? json(serialIt->second) : json(nullptr)},
+        {"args", args},
+    };
+}
+
 inline TriBool jsonToTriBool(const json& j) {
     if (j.is_null()) return std::nullopt;
     return j.get<bool>();
