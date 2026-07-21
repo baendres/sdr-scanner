@@ -16,6 +16,8 @@ std::string channelModeToString(ChannelMode mode) {
         case ChannelMode::FM: return "FM";
         case ChannelMode::NFM: return "NFM";
         case ChannelMode::AM: return "AM";
+        case ChannelMode::NOAA: return "NOAA";
+        case ChannelMode::BFM_EAS: return "BFM_EAS";
     }
     return "FM";
 }
@@ -25,6 +27,8 @@ std::optional<ChannelMode> channelModeFromString(const std::string& s) {
     if (u == "FM") return ChannelMode::FM;
     if (u == "NFM") return ChannelMode::NFM;
     if (u == "AM") return ChannelMode::AM;
+    if (u == "NOAA") return ChannelMode::NOAA;
+    if (u == "BFM_EAS") return ChannelMode::BFM_EAS;
     return std::nullopt;
 }
 

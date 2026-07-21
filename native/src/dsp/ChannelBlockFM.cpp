@@ -47,12 +47,27 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
       rfSampleRate_(rfSampleRate),
       ctcssToneHz_(ctcssToneHz) {
 
-    if (deviation_hz_ > audioSampleRate_) {
-        // Wideband (Broadcast FM) needs a quad rate multiple of the audio rate - deferred,
-        // see native/README.md ("Explicitly Deferred").
-        throw std::runtime_error("ChannelBlockFM: deviation exceeds audio sample rate (BFM not yet supported)");
-    }
     fmQuadRate_ = audioSampleRate_;
+    if (deviation_hz_ > audioSampleRate_) {
+        // Wideband (Broadcast FM, e.g. BFM_EAS) needs a much higher demod ("quad") rate than
+        // the final audio rate - find the smallest multiple of audioSampleRate_ that's wide
+        // enough to cover a WBFM station (~200kHz) and evenly divides rfSampleRate_, mirroring
+        // Channel.py's ChannelBlock_FM. The audio filter below decimates back down to
+        // audioSampleRate_ in the same step it applies the audio bandpass, so everything past
+        // that point (RSSI aside, which stays at fmQuadRate_) is unaffected by this branch.
+        int n = static_cast<int>(std::ceil(200000.0 / audioSampleRate_));
+        int fmQuadMultiple = -1;
+        while (fmQuadMultiple < 0) {
+            if (rfSampleRate_ % (audioSampleRate_ * n) == 0) {
+                fmQuadMultiple = n;
+            } else if (rfSampleRate_ < audioSampleRate_ * n) {
+                throw std::runtime_error("ChannelBlockFM: unable to find an FM quad rate for this wideband deviation");
+            } else {
+                n++;
+            }
+        }
+        fmQuadRate_ = audioSampleRate_ * fmQuadMultiple;
+    }
 
     if (rfSampleRate_ % fmQuadRate_ != 0) {
         throw std::runtime_error("ChannelBlockFM: RF sample rate is not a multiple of the FM quad rate");
@@ -95,8 +110,12 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     ///
     // Audio filter + gain
 
+    // Doubles as the fmQuadRate_ -> audioSampleRate_ decimator when wideband (see above) - a
+    // decimating band-pass FIR filter is a standard way to combine audio shaping with the
+    // final rate reduction in one block. audioDecim is 1 (no-op) in the narrowband case.
+    int audioDecim = fmQuadRate_ / audioSampleRate_;
     blockAudioFilter_ = gr::filter::fir_filter_fff::make(
-        1, gr::filter::firdes::band_pass(1, audioSampleRate_, 200, 3500, 100));
+        audioDecim, gr::filter::firdes::band_pass(1, fmQuadRate_, 200, 3500, 100));
     blockAudioGain_ = gr::blocks::multiply_const_ff::make(audioGainFactor_);
 
     ///

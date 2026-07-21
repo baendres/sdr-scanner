@@ -11,6 +11,7 @@ include(Catch)
 add_executable(sdrscan_tests
     test_database.cpp
     test_channel_fm.cpp
+    test_channel_eas.cpp
     test_ctcss_squelch.cpp
     test_scanner_config.cpp
     test_icecast_output.cpp

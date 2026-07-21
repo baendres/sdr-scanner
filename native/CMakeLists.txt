@@ -43,6 +43,7 @@ add_library(sdrscan_core STATIC
     src/dsp/ChannelBlockBase.cpp
     src/dsp/ChannelBlockFM.cpp
     src/dsp/ChannelBlockAM.cpp
+    src/dsp/ChannelBlockEAS.cpp
     src/dsp/ScanWindow.cpp
     src/receiver/SoapyReceiver.cpp
     src/audio/AudioMixer.cpp

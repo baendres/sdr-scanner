@@ -17,8 +17,13 @@
 
 namespace sdrscan {
 
-// FM/NFM demodulator, direct C++ port of Channel.py's ChannelBlock_FM - with CTCSS squelch
-// added as a new capability (see native/README.md "CTCSS Squelch Design").
+// FM/NFM/WBFM demodulator, direct C++ port of Channel.py's ChannelBlock_FM - with CTCSS
+// squelch added as a new capability (see native/README.md "CTCSS Squelch Design"). Also used,
+// wrapped by ChannelBlockEAS, as the demod stage for NOAA/BFM_EAS (see ChannelBlockEAS.h).
+//
+// When deviation_hz exceeds audioSampleRate (wideband/broadcast FM), demodulation runs at a
+// higher internal "quad rate" (fmQuadRate_) and the audio filter decimates back down to
+// audioSampleRate - narrowband channels are unaffected (fmQuadRate_ == audioSampleRate_ there).
 //
 // Simplification vs. the Python version: always uses a single-stage
 // freq_xlating_fir_filter_ccf for input channelization instead of the Python code's optional

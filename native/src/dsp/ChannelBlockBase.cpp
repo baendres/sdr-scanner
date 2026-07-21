@@ -93,6 +93,12 @@ ChannelStatus ChannelBlockBase::computeAndReportStatus(bool unmutedNow) {
         }
     }
 
+    return reportStatus(status);
+}
+
+ChannelStatus ChannelBlockBase::reportStatus(ChannelStatus status) {
+    double now = nowUnixSeconds();
+
     bool statusChanged = (!lastStatusReport_.has_value() || *lastStatusReport_ != status);
     bool periodicUpdate = status != ChannelStatus::IDLE && (now - lastStatusTime_) > STATUS_UPDATE_TIME_S;
 

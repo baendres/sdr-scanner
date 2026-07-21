@@ -40,7 +40,7 @@ function el(tag, attrs, children) {
 function renderChannelRow(cc) {
   const label = el("input", { type: "text", value: cc.label });
   const freq = el("input", { type: "number", step: "0.001", value: (cc.freq_hz / 1e6).toString() });
-  const mode = el("select", {}, ["FM", "NFM", "AM"].map(m => el("option", { value: m, text: m, selected: m === cc.mode })));
+  const mode = el("select", {}, ["FM", "NFM", "AM", "NOAA", "BFM_EAS"].map(m => el("option", { value: m, text: m, selected: m === cc.mode })));
   const squelch = el("input", { type: "number", step: "1", value: cc.squelchThreshold });
   const ctcss = el("input", { type: "number", step: "0.1", value: cc.ctcssToneHz != null ? cc.ctcssToneHz : "", placeholder: "off" });
   const gain = el("input", { type: "number", step: "1", value: cc.audioGain_dB });

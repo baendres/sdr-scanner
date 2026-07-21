@@ -56,11 +56,27 @@ public:
     // (the Scanner polls this while a ScanWindow is running).
     virtual ChannelStatus getStatus() = 0;
 
+    // Latest telemetry, as last reported via updateRSSI()/updateVolume(). Public so
+    // ChannelBlockEAS can surface its internal ChannelBlockFM's telemetry as its own (see
+    // ChannelBlockEAS::getStatus()) - that FM block's own getStatus()/computeAndReportStatus()
+    // is never called (EAS has its own trigger-latch status model), so this is otherwise the
+    // only way to reach it.
+    std::optional<float> rssi() const { return rssi_dBFS_; }
+    std::optional<float> noiseFloor() const { return noiseFloor_dBFS_; }
+    std::optional<float> volume() const { return volume_dBFS_; }
+
 protected:
-    // Common status bookkeeping shared by all demod modes: given whether the squelch(es)
-    // are currently unmuted, tracks active/dwell timing and invokes the status callback
-    // (throttled the same way the Python version was). Returns the resulting status.
+    // Common status bookkeeping shared by squelch-gated demod modes: given whether the
+    // squelch(es) are currently unmuted, tracks active/dwell timing and reports the resulting
+    // status via reportStatus(). Not used by ChannelBlockEAS, which has its own trigger-latch
+    // active/dwell model but still calls reportStatus() directly to share the same
+    // change/periodic reporting logic.
     ChannelStatus computeAndReportStatus(bool unmutedNow);
+
+    // Reports `status` via statusCallback_ if it changed since the last report, or periodically
+    // while non-idle (throttled to STATUS_UPDATE_TIME_S) - same throttling the Python version
+    // used. Returns `status` unchanged, so callers can `return reportStatus(status);`.
+    ChannelStatus reportStatus(ChannelStatus status);
 
     void connectVolume(const gr::basic_block_sptr& sourceBlock, int sourceBlockPort);
 

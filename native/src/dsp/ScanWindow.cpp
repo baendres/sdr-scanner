@@ -2,6 +2,7 @@
 #include "Const.h"
 #include "ChannelBlockFM.h"
 #include "ChannelBlockAM.h"
+#include "ChannelBlockEAS.h"
 #include "../util/Uuid.h"
 
 #include <gnuradio/filter/firdes.h>
@@ -35,6 +36,18 @@ std::shared_ptr<ChannelBlockBase> buildChannelBlock(const ChannelConfig& cc,
                 cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
                 cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
                 statusCallback);
+            break;
+        case ChannelMode::NOAA:
+            block = gnuradio::make_block_sptr<ChannelBlockEAS>(
+                cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
+                cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
+                /*deviation_hz=*/5000, /*alertTonesHz=*/std::vector<double>{1050.0}, statusCallback);
+            break;
+        case ChannelMode::BFM_EAS:
+            block = gnuradio::make_block_sptr<ChannelBlockEAS>(
+                cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
+                cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
+                /*deviation_hz=*/75000, /*alertTonesHz=*/std::vector<double>{853.0, 960.0}, statusCallback);
             break;
         default:
             throw std::runtime_error("buildChannelBlock: unhandled ChannelMode");

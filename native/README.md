@@ -25,11 +25,11 @@ Deferred" below).
 
 This is a working foundation, not full feature parity with the Python app yet:
 
-- **Implemented**: SQLite config + live control API, RTL-SDR/Soapy receivers, FM/NFM/AM
-  demod, CTCSS squelch, multi-receiver scan-window scheduling, audio mixing with Local
-  (PortAudio) / UDP / WebSocket / Icecast outputs, the web UI (including a settings page for
-  editing channels/receivers/outputs).
-- **Deferred** (see below): NOAA/BFM_EAS/SSB modes, DMR/P25.
+- **Implemented**: SQLite config + live control API, RTL-SDR/Soapy receivers, FM/NFM/AM/
+  NOAA/BFM_EAS demod, CTCSS squelch, multi-receiver scan-window scheduling, audio mixing with
+  Local (PortAudio) / UDP / WebSocket / Icecast outputs, the web UI (including a settings page
+  for editing channels/receivers/outputs).
+- **Deferred** (see below): SSB, DMR/P25.
 
 ## Building
 
@@ -139,6 +139,22 @@ comparison is strict (`energy > level`). The fix (see `ChannelBlockFM::getStatus
 simply not consult the CTCSS block's `unmuted()` at all unless a tone is actually configured
 (or the channel is force-active), rather than relying on the block to self-disable.
 
+### NOAA / BFM_EAS (attention-tone) channel modes
+
+`ChannelBlockEAS` wraps an internal `ChannelBlockFM` (the demod + RF power squelch) and taps
+its demodulated audio with an FFT tone detector (`EasToneDetectBlock`) looking for a
+configured alert tone: NOAA weather radio's 1050 Hz SAME tone, or Broadcast EAS's 853/960 Hz
+two-tone signal. Unlike the squelch-driven modes, "active" is a debounced latch - 3 consecutive
+tone-detect triggers open the audio gate and start a `dwellTime_s` countdown, so a channel
+stays audible/`ACTIVE` for the rest of the alert even if the tone detector misses a frame or
+two between bursts.
+
+BFM_EAS relies on `ChannelBlockFM`'s wideband ("quad rate") support: when a channel's
+deviation exceeds the audio sample rate, demodulation runs at a higher internal rate (a
+multiple of the audio rate, wide enough to cover a ~200kHz WBFM station) and the audio filter
+decimates back down in the same step it applies the audio bandpass - narrowband channels are
+unaffected.
+
 ### Simplifications vs. the Python version (documented in code comments too)
 
 - Input channelization always uses a single-stage `freq_xlating_fir_filter_ccf` rather than
@@ -148,6 +164,10 @@ simply not consult the CTCSS block's `unmuted()` at all unless a tone is actuall
 - FM de-emphasis is implemented directly via `iir_filter_ffd` with hand-computed coefficients
   (the standard GNU Radio de-emphasis formula), since `fm_deemph`/`nbfm_rx` are GRC-only
   hierarchical blocks with no C++ class - same for the input channelization decimation.
+- `ChannelBlockEAS`'s tone detector does its own windowing/FFT/magnitude instead of using
+  `fft.logpwrfft_f` (also GRC/Python-only, no C++ class), and compares tone-vs-reference-band
+  energy directly in linear power rather than converting to dB first - mathematically
+  equivalent to Python's dB-domain threshold comparison, just skips a conversion step.
 
 ## REST / WebSocket API
 
@@ -175,8 +195,8 @@ handle it at a reverse-proxy layer in front of this.
 
 ## Explicitly deferred
 
-- **NOAA / BFM_EAS / SSB channel modes** - same `ChannelBlockBase` extension point as
-  `ChannelBlockFM`/`ChannelBlockAM`; straightforward follow-ups.
+- **SSB channel mode** - same `ChannelBlockBase` extension point as
+  `ChannelBlockFM`/`ChannelBlockAM`/`ChannelBlockEAS`; a straightforward follow-up.
 - **wxPython GUI** - dropped in favor of the web UI (the Python repo's own README already
   listed this as a TODO).
 - **DMR/P25** - per the original request, deferred entirely. If tackled later, realistically
@@ -185,10 +205,11 @@ handle it at a reverse-proxy layer in front of this.
 
 ## Testing without SDR hardware
 
-`tests/test_channel_fm.cpp` and `tests/test_ctcss_squelch.cpp` build small synthetic
-flowgraphs (`gr::analog::sig_source_c` / `frequency_modulator_fc` standing in for a receiver)
-feeding directly into `ChannelBlockFM`/`ChannelBlockAM`, and assert on squelch/CTCSS
-open-closed behavior - this is what caught the CTCSS bug described above. `test_database.cpp`
+`tests/test_channel_fm.cpp`, `tests/test_ctcss_squelch.cpp`, and `tests/test_channel_eas.cpp`
+build small synthetic flowgraphs (`gr::analog::sig_source_c` / `frequency_modulator_fc`
+standing in for a receiver) feeding directly into `ChannelBlockFM`/`ChannelBlockAM`/
+`ChannelBlockEAS`, and assert on squelch/CTCSS/tone-detect open-closed behavior - this is what
+caught the CTCSS bug described above. `test_database.cpp`
 round-trips config through SQLite, including reopening the database to prove settings survive
 a process restart. Actually receiving RF and playing audio needs real (or SoapyRemote) SDR
 hardware, which isn't available in a CI/dev-container sandbox - verify that part on your own

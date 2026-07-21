@@ -7,12 +7,14 @@
 
 namespace sdrscan {
 
-// A channel's demodulation mode. NOAA/BFM_EAS/SSB are deferred follow-ups (see README) -
-// the enum leaves room for them but they are not implemented yet.
+// A channel's demodulation mode. SSB is a deferred follow-up (see README) - the enum leaves
+// room for it but it's not implemented yet.
 enum class ChannelMode {
     FM,
     NFM,
     AM,
+    NOAA,     // NOAA weather radio SAME/EAS attention tone (1050 Hz) on narrowband FM
+    BFM_EAS,  // Broadcast EAS two-tone attention signal (853/960 Hz) on wideband FM
 };
 
 std::string channelModeToString(ChannelMode mode);
