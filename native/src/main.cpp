@@ -12,7 +12,13 @@
 
 namespace {
 std::atomic<bool> g_stop{false};
+std::atomic<bool> g_restartRequested{false};
 void handleSignal(int) { g_stop = true; }
+
+// Exit code used only for the "Restart Now" path (never for a plain SIGINT/SIGTERM stop) - see
+// the constructor comment below. Any non-zero value works; this one's arbitrary but distinct
+// from 1 (the generic "fatal error" path just below) so the two are distinguishable in logs.
+constexpr int kRestartRequestedExitCode = 75;
 } // namespace
 
 int main(int argc, char** argv) {
@@ -52,13 +58,16 @@ int main(int argc, char** argv) {
         if (port > 0) settings.httpPort = port;
 
         // Lets the settings page's "Restart Now" button (POST /api/restart) request the same
-        // graceful shutdown Ctrl+C/SIGTERM does. This process then exits and relies on the
-        // deployment's restart policy (docker-compose's `restart: unless-stopped`, see
-        // native/docker-compose.yaml) to bring it back up with any pending receiver/output
-        // config changes applied. Running the binary directly with no restart policy means the
-        // button just stops the process - it won't come back on its own.
+        // graceful shutdown Ctrl+C/SIGTERM does, but exits non-zero afterward instead of 0 (see
+        // kRestartRequestedExitCode) so it can be told apart from a deliberate stop. Paired with
+        // `restart: on-failure` in native/docker-compose.yaml, that's what brings the process
+        // back up with any pending receiver/output config applied: on-failure restarts on a
+        // non-zero exit but - unlike unless-stopped/always - never auto-starts the container
+        // just because the host rebooted, so this won't fight with another project's containers
+        // that are meant to be the ones that come back after a reboot. Running the binary
+        // directly with no restart policy means the button just stops the process.
         sdrscan::HttpServer httpServer(scanner, settings.httpHost, settings.httpPort, webRoot,
-                                        []() { g_stop = true; });
+                                        []() { g_restartRequested = true; g_stop = true; });
 
         scanner.start();
         httpServer.start();
@@ -76,5 +85,5 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    return 0;
+    return g_restartRequested ? kRestartRequestedExitCode : 0;
 }

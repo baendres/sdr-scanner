@@ -48,11 +48,15 @@ Notes:
   container USB access for RTL-SDR/SoapySDR hardware.
 - `./data` is mounted into the container for the SQLite database, so config (and any live
   changes made through the API) survives `docker compose restart` / container recreation.
-- `restart: unless-stopped` is what makes the settings page's **Restart Now** button (see "The
-  'no restart' mechanism" below) actually bring the process back - it exits gracefully and
-  relies on this policy to relaunch it with the new receiver/output config loaded. Running the
-  bare binary directly (the "Local" section below) has no such policy, so that button would
-  just stop the process there.
+- `restart: on-failure` is what makes the settings page's **Restart Now** button (see "The 'no
+  restart' mechanism" below) actually bring the process back - it exits with a distinct
+  non-zero code and relies on this policy to relaunch it with the new receiver/output config
+  loaded. Deliberately *not* `unless-stopped`/`always`: those also auto-start the container
+  whenever the host reboots, which is unwanted if you're running this alongside another
+  project's containers on the same machine and want the reboot to bring *that* one back, not
+  this one (see the note on `docker-compose.yaml`'s `restart` line). Running the bare binary
+  directly (the "Local" section below) has no restart policy at all, so the button just stops
+  the process there.
 
 ### Local (fast dev loop)
 

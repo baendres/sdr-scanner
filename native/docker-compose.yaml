@@ -8,4 +8,10 @@ services:
     volumes:
       - ./data:/data
       - /dev/bus/usb:/dev/bus/usb
-    restart: unless-stopped
+    # on-failure (not unless-stopped/always): restarts when the process exits non-zero - which
+    # covers both a genuine crash and the settings page's "Restart Now" button (see main.cpp's
+    # kRestartRequestedExitCode) - but does NOT auto-start this container just because the host
+    # rebooted. That's deliberate if you're running this alongside another project's containers
+    # on the same machine and want a reboot to bring *that* project back, not this one - see
+    # native/README.md.
+    restart: on-failure
