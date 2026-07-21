@@ -264,6 +264,50 @@ async function addOutput() {
 }
 
 ///
+// Restart
+
+// Polls GET /api/state until it responds again (the new process is up after a docker-compose
+// `restart: unless-stopped` cycle) or `timeoutMs` elapses. Requests fail with a network error
+// while the old process has exited and the new one hasn't bound the port yet - that's the
+// expected/normal state mid-restart, not a real failure, so it's just retried.
+async function pollUntilBackOnline(timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      await api("GET", "/api/state");
+      return true;
+    } catch { /* still restarting */ }
+  }
+  return false;
+}
+
+async function restartNow() {
+  if (!confirm("Restart sdrscan now to apply pending receiver/output changes? Scanning will briefly stop.")) return;
+  const btn = document.getElementById("btnRestartNow");
+  btn.disabled = true;
+  btn.textContent = "Restarting...";
+  try {
+    await api("POST", "/api/restart");
+  } catch (e) {
+    log(`restart request failed: ${e.message}`);
+    btn.disabled = false;
+    btn.textContent = "Restart Now";
+    return;
+  }
+  log("restart requested - waiting for sdrscan to come back online...");
+  if (await pollUntilBackOnline()) {
+    log("sdrscan is back online - reloading");
+    window.location.reload();
+  } else {
+    log("sdrscan didn't come back within 30s - if it's not running under a restart policy " +
+        "(e.g. docker compose's `restart: unless-stopped`), you'll need to start it manually");
+    btn.disabled = false;
+    btn.textContent = "Restart Now";
+  }
+}
+
+///
 // Load + wire up
 
 async function loadAll() {
@@ -280,12 +324,15 @@ async function loadAll() {
 
   const outputsBody = document.getElementById("outputsBody");
   outputsBody.replaceChildren(...state.outputs.map(renderOutputRow));
+
+  document.getElementById("restartBanner").classList.toggle("show", !!state.restartRequired);
 }
 
 (async function init() {
   document.getElementById("btnAddChannel").addEventListener("click", addChannel);
   document.getElementById("btnAddReceiver").addEventListener("click", addReceiver);
   document.getElementById("btnAddOutput").addEventListener("click", addOutput);
+  document.getElementById("btnRestartNow").addEventListener("click", restartNow);
   wireNewOutputTypeSelector();
 
   try {

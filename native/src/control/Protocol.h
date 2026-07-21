@@ -92,6 +92,7 @@ inline json snapshotToJson(const ScannerSnapshot& s) {
         {"receivers", receivers},
         {"outputs", outputs},
         {"channelStatuses", statuses},
+        {"restartRequired", s.restartRequired},
     };
 }
 

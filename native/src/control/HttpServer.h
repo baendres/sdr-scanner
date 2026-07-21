@@ -7,6 +7,7 @@
 #include <boost/beast/core/stream_traits.hpp>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -31,7 +32,11 @@ namespace sdrscan {
 // handful of concurrent clients (a couple of browser tabs); revisit if that stops being true.
 class HttpServer {
 public:
-    HttpServer(Scanner& scanner, std::string host, int port, std::string webRoot);
+    // requestShutdown, if given, is called when a client hits POST /api/restart (the settings
+    // page's "Restart Now" button) - see the comment on that route in HttpServer.cpp for what
+    // it's expected to do.
+    HttpServer(Scanner& scanner, std::string host, int port, std::string webRoot,
+               std::function<void()> requestShutdown = nullptr);
     ~HttpServer();
 
     void start();
@@ -62,6 +67,7 @@ private:
     std::string host_;
     int port_;
     std::string webRoot_;
+    std::function<void()> requestShutdown_;
 
     boost::asio::io_context ioc_;
     std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor_;

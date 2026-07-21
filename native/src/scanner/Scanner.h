@@ -24,6 +24,11 @@ struct ScannerSnapshot {
     std::vector<ReceiverConfig> receivers;
     std::vector<OutputConfig> outputs;
     std::vector<ChannelStatusUpdate> channelStatuses;
+    // True once a receiver/output config has been added/edited/deleted since this process
+    // started - those are database-only changes (see upsertReceiverConfig's header note) that
+    // won't reach the live receivers_/audioMixer_ until sdrscan restarts. Drives the settings
+    // page's "restart needed" banner.
+    bool restartRequired = false;
 };
 
 // Top-level orchestrator, direct port of Scanner.py: owns the config (backed by Database
@@ -107,6 +112,7 @@ private:
     std::unordered_map<std::string, ChannelConfig> channelConfigsById_;
     std::vector<ReceiverConfig> receiverConfigs_;
     std::vector<OutputConfig> outputConfigs_;
+    std::atomic<bool> restartRequired_{false}; // see ScannerSnapshot::restartRequired
 
     mutable std::mutex scheduleMutex_;
     std::vector<ScanWindowConfig> scanWindowConfigs_;

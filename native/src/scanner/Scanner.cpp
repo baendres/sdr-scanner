@@ -92,6 +92,7 @@ ScannerSnapshot Scanner::getSnapshot() const {
         std::lock_guard<std::mutex> lock(statusMutex_);
         for (const auto& [id, status] : channelStatusById_) snapshot.channelStatuses.push_back(status);
     }
+    snapshot.restartRequired = restartRequired_;
     return snapshot;
 }
 
@@ -294,6 +295,7 @@ std::string Scanner::upsertReceiverConfig(ReceiverConfig rc) {
     } else {
         receiverConfigs_.push_back(rc);
     }
+    restartRequired_ = true;
     return rc.id;
 }
 
@@ -304,6 +306,7 @@ void Scanner::deleteReceiverConfig(const std::string& receiverId) {
         std::remove_if(receiverConfigs_.begin(), receiverConfigs_.end(),
                         [&](const ReceiverConfig& rc) { return rc.id == receiverId; }),
         receiverConfigs_.end());
+    restartRequired_ = true;
 }
 
 int64_t Scanner::upsertOutputConfig(OutputConfig oc) {
@@ -317,6 +320,7 @@ int64_t Scanner::upsertOutputConfig(OutputConfig oc) {
     } else {
         outputConfigs_.push_back(oc);
     }
+    restartRequired_ = true;
     return id;
 }
 
@@ -327,6 +331,7 @@ void Scanner::deleteOutputConfig(int64_t outputId) {
         std::remove_if(outputConfigs_.begin(), outputConfigs_.end(),
                         [&](const OutputConfig& oc) { return oc.id == outputId; }),
         outputConfigs_.end());
+    restartRequired_ = true;
 }
 
 void Scanner::setMaxChannelsPerWindow(int maxChannelsPerWindow) {

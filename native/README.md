@@ -123,6 +123,13 @@ Two tiers:
   restart): add/remove a channel, change frequency, change `maxChannelsPerWindow`. This calls
   `Scanner::buildWindows()`, which mirrors the Python version's window-building algorithm but
   can now be triggered live instead of only at startup.
+- **Database-only** (receivers, audio outputs): these are read once at startup, so edits take
+  effect on the next process restart, not live. The settings page shows a "restart needed"
+  banner with a **Restart Now** button (`POST /api/restart`) once you've made one of these
+  changes - it requests a graceful shutdown (the same path SIGTERM/Ctrl+C use) and relies on
+  the deployment's restart policy (docker-compose's `restart: unless-stopped`, see
+  `native/docker-compose.yaml`) to bring the process back up with the new config loaded.
+  Running the binary directly with no restart policy means that button just stops it.
 
 ### CTCSS squelch
 

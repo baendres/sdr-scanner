@@ -44,8 +44,10 @@ std::string channelIdFromPath(const std::string& target, const std::string& pref
 
 } // namespace
 
-HttpServer::HttpServer(Scanner& scanner, std::string host, int port, std::string webRoot)
-    : scanner_(scanner), host_(std::move(host)), port_(port), webRoot_(std::move(webRoot)) {
+HttpServer::HttpServer(Scanner& scanner, std::string host, int port, std::string webRoot,
+                       std::function<void()> requestShutdown)
+    : scanner_(scanner), host_(std::move(host)), port_(port), webRoot_(std::move(webRoot)),
+      requestShutdown_(std::move(requestShutdown)) {
     scanner_.setEventCallback([this](const ScannerEvent& event) { onScannerEvent(event); });
 }
 
@@ -210,6 +212,18 @@ void HttpServer::handleConnection(tcp::socket socket) {
                         int64_t id = std::stoll(channelIdFromPath(path, "/api/outputs/"));
                         scanner_.deleteOutputConfig(id);
                         res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"ok", true}});
+                    } else if (req.method() == http::verb::post && path == "/api/restart") {
+                        // The settings page's "Restart Now" button, for applying database-only
+                        // receiver/output changes (see applyReceiverPatchFields's comment). This
+                        // process just exits gracefully - main.cpp's requestShutdown callback
+                        // sets the same flag Ctrl+C/SIGTERM does - and relies on the deployment's
+                        // restart policy (docker-compose's `restart: unless-stopped`) to bring it
+                        // back up with the new config loaded. Written and sent before the
+                        // shutdown is requested, on this same (per-connection) thread, so the
+                        // client always gets a response even though the server process is about
+                        // to go away.
+                        res = jsonResponse(req.version(), http::status::ok, nlohmann::json{{"ok", true}});
+                        if (requestShutdown_) requestShutdown_();
                     } else if (req.method() == http::verb::get) {
                         std::string filePath = path == "/" ? "index.html" : path.substr(1);
                         if (filePath.find("..") != std::string::npos) {

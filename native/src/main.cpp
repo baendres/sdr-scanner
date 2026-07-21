@@ -51,7 +51,14 @@ int main(int argc, char** argv) {
         if (!host.empty()) settings.httpHost = host;
         if (port > 0) settings.httpPort = port;
 
-        sdrscan::HttpServer httpServer(scanner, settings.httpHost, settings.httpPort, webRoot);
+        // Lets the settings page's "Restart Now" button (POST /api/restart) request the same
+        // graceful shutdown Ctrl+C/SIGTERM does. This process then exits and relies on the
+        // deployment's restart policy (docker-compose's `restart: unless-stopped`, see
+        // native/docker-compose.yaml) to bring it back up with any pending receiver/output
+        // config changes applied. Running the binary directly with no restart policy means the
+        // button just stops the process - it won't come back on its own.
+        sdrscan::HttpServer httpServer(scanner, settings.httpHost, settings.httpPort, webRoot,
+                                        []() { g_stop = true; });
 
         scanner.start();
         httpServer.start();
