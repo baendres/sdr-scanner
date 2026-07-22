@@ -3,7 +3,12 @@
 
 #include <gnuradio/io_signature.h>
 
+#include <sys/resource.h>
+#include <unistd.h>
+
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <iostream>
 #include <thread>
 
@@ -108,6 +113,20 @@ void AudioMixer::run() {
     std::vector<std::deque<float>> mixBuffers(numInputStreams_);
 
     for (auto& o : outputs_) o->reconnect();
+
+    // Matches Python's AudioServer.run() (`os.nice(-5)`, before its own mix loop) - the mixing
+    // loop is a small, latency-sensitive amount of work competing for CPU against the receiver
+    // threads' much heavier DSP (demod, filtering, tone-detect FFTs, ...). A higher scheduling
+    // priority here means the OS is less likely to delay exactly the thread whose delays are
+    // audible as clicks/gaps in every output stream at once, without meaningfully starving the
+    // receiver threads (this thread does very little work per iteration). Requires
+    // CAP_SYS_NICE (root, or the container's `privileged: true`, already needed for USB
+    // access) - silently no-ops rather than failing if unavailable, same as Python's own
+    // try/except around os.nice() there.
+    if (setpriority(PRIO_PROCESS, gettid(), -5) != 0) {
+        std::cerr << "AudioMixer: couldn't raise thread priority (needs root/CAP_SYS_NICE): "
+                  << std::strerror(errno) << "\n";
+    }
 
     auto startTime = std::chrono::steady_clock::now();
     int64_t samplesMixed = 0;
