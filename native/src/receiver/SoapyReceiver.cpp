@@ -16,6 +16,20 @@ namespace {
 // Curated list matching Receiver.py's Receiver_RTLSDR.SAMPLE_RATES - rates known to decimate
 // down cleanly, rather than trusting the RTL-SDR's raw (misleadingly continuous) reported range.
 const std::vector<int> kRtlSdrSampleRates = {1'024'000, 1'536'000, 1'792'000, 1'920'000, 2'048'000};
+
+// Receiver.py's README documents 'streamArgs: bufflen=131072,buffers=8' and 'tunePause: 0.020'
+// as a matched pair: on a hop, stale samples from the OLD window are still sitting in the
+// async read queue, and tunePause exists specifically to let those drain before the new
+// window's squelch/demod start trusting what comes out - too short a pause relative to the
+// buffer depth means the new window briefly processes old-frequency samples, which the README
+// calls out by name as a cause of "invalid squelch breaks" (audible as spurious noise/false
+// triggers right after a hop). This receiver type's own streamArgs (below) uses buffers=32 -
+// 4x Python's calibrated default, added to survive a different problem (see that comment) -
+// so it needs a correspondingly longer settle time or it inherits exactly that stale-sample
+// problem. Scaled roughly proportionally to the buffer depth increase; if a specific device
+// still needs more, this may need to become a per-receiver config knob (Python's tunePause
+// already is one).
+constexpr int kRtlSdrTuneSettleMs = 80;
 } // namespace
 
 SoapyReceiver::SoapyReceiver(ReceiverConfig config,
@@ -249,8 +263,10 @@ bool SoapyReceiver::startWindow(const std::string& windowId) {
 
     // Let the retuned signal settle before routing it into this window's squelch/demod chain -
     // feeding it transitional/settling samples right after a retune can trip a false
-    // squelch-open or a demod glitch (matches Receiver.py's tunePause).
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // squelch-open or a demod glitch (matches Receiver.py's tunePause - see kRtlSdrTuneSettleMs
+    // for why RTL-SDR needs longer than Python's default here).
+    int settleMs = (config_.type == ReceiverType::RTL_SDR) ? kRtlSdrTuneSettleMs : 20;
+    std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
 
     audioSelector_->set_input_index(windowIdx);
     rfSelector_->set_output_index(windowIdx);

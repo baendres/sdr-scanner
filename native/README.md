@@ -189,6 +189,25 @@ multiple of the audio rate, wide enough to cover a ~200kHz WBFM station) and the
 decimates back down in the same step it applies the audio bandpass - narrowband channels are
 unaffected.
 
+### Hop settle time (tunePause) vs. RTL-SDR buffer depth
+
+`SoapyReceiver` never stops the flowgraph between windows - it redirects the RF selector to a
+window's chain and, after a short settle delay, starts trusting what comes out (see the class
+comment on `SoapyReceiver.h`). That delay exists because samples from the *old* window are
+still sitting in the async read queue at hop time; too short a delay relative to that queue's
+depth means the new window's squelch/demod briefly process old-frequency samples - upstream
+`sdr-scanner`'s README calls this out by name ("Tuning-Pause Settings") as a cause of "invalid
+squelch breaks", audible as spurious noise/false triggers right after a hop.
+
+Upstream's calibrated default pairs `buffers=8` with a 20ms pause. This receiver type uses
+`buffers=32` instead (4x deeper - see the `streamArgs` comment in `SoapyReceiver.cpp` for why:
+it's there to survive USB completion latency on a virtualized passthrough, e.g. WSL2's
+usbipd), which needs a correspondingly longer settle time - `kRtlSdrTuneSettleMs` (80ms,
+scaled roughly with the buffer depth) exists for exactly that reason. If a specific device
+still shows hop-boundary noise/clicks, that value is the first thing to try raising; it isn't
+yet exposed as a per-receiver config knob the way upstream's `tunePause` is, since no hardware
+has needed that granularity yet.
+
 ### Simplifications vs. the Python version (documented in code comments too)
 
 - Input channelization always uses a single-stage `freq_xlating_fir_filter_ccf` rather than
