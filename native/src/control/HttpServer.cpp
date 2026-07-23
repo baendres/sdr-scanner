@@ -244,6 +244,13 @@ void HttpServer::handleConnection(tcp::socket socket) {
                                 ss << file.rdbuf();
                                 res = http::response<http::string_body>{http::status::ok, req.version()};
                                 res.set(http::field::content_type, contentTypeFor(filePath));
+                                // Never let the browser cache the web UI's own files. This app
+                                // gets rebuilt/redeployed in place (docker compose up --build)
+                                // while a tab may already be open - without this, a browser can
+                                // keep running old JS/CSS indefinitely (nothing here ever tells
+                                // it to check again), which looks exactly like a fix "not
+                                // working" when it's really just not loaded yet.
+                                res.set(http::field::cache_control, "no-store");
                                 res.body() = ss.str();
                                 res.prepare_payload();
                             }
