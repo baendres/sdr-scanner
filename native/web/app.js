@@ -376,8 +376,15 @@ let playbackPrimed = false;
 // module-loading requirements). Fine for this use case - not low-latency interactive audio.
 // Revisit with an AudioWorklet if that deprecation ever becomes a practical problem.
 const PROCESSOR_BUFFER_SIZE = 1024;
-const PLAYBACK_RING_SECONDS = 2.0; // ring buffer capacity
+const PLAYBACK_RING_SECONDS = 2.0; // ring buffer capacity (a hard ceiling, not a target - see MAX_LATENCY_SECONDS)
 const PRIME_SECONDS = 0.15; // wait for this much buffered audio before unmuting playback
+// The server and the browser's sound card are independent clocks - even a tiny relative drift
+// between them accumulates linearly over a long session (observed: buffered-ahead latency
+// crept up to PLAYBACK_RING_SECONDS, i.e. the ring's hard capacity, after running overnight).
+// Left uncorrected, playback latency only ever grows. Actively trimming back to this target
+// whenever it's exceeded (see handlePcmFrame) keeps steady-state latency near real-time
+// indefinitely instead of slowly drifting toward - and getting stuck at - the ring's capacity.
+const MAX_LATENCY_SECONDS = 0.5;
 
 class PlaybackRingBuffer {
   constructor(capacitySamples) {
@@ -415,6 +422,14 @@ class PlaybackRingBuffer {
       n++;
     }
     for (; n < dest.length; n++) dest[n] = 0;
+  }
+
+  // Advances the read pointer by up to n samples without playing them - used to actively trim
+  // excess buffered-ahead latency (see MAX_LATENCY_SECONDS/handlePcmFrame) rather than only
+  // reacting once the ring is completely full.
+  discard(n) {
+    const toDrop = Math.min(n, this.available());
+    this.tail = (this.tail + toDrop) % this.capacity;
   }
 }
 
@@ -460,6 +475,10 @@ function handlePcmFrame(buf) {
   const f32 = new Float32Array(int16.length);
   for (let i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768.0;
   playbackBuffer.write(f32);
+
+  const maxSamples = AUDIO_SAMPLE_RATE * MAX_LATENCY_SECONDS;
+  const excess = playbackBuffer.available() - maxSamples;
+  if (excess > 0) playbackBuffer.discard(excess);
 
   setAudioStatus(`playing (${(playbackBuffer.available() / AUDIO_SAMPLE_RATE).toFixed(2)}s buffered)`);
 }
