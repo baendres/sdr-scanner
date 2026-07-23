@@ -384,7 +384,12 @@ const PRIME_SECONDS = 0.15; // wait for this much buffered audio before unmuting
 // Left uncorrected, playback latency only ever grows. Actively trimming back to this target
 // whenever it's exceeded (see handlePcmFrame) keeps steady-state latency near real-time
 // indefinitely instead of slowly drifting toward - and getting stuck at - the ring's capacity.
-const MAX_LATENCY_SECONDS = 0.5;
+// Deliberately close to PRIME_SECONDS (not a generous multiple of it): a low-latency scanner
+// should stay as close to real-time as normal jitter allows, not just "bounded eventually" -
+// a first attempt at 0.5s technically stopped the drift (verified: holds flat there
+// indefinitely instead of continuing to 2s) but still let latency roughly double from the
+// ~0.2s baseline before correcting, which is a real, audible regression on its own.
+const MAX_LATENCY_SECONDS = 0.25;
 
 class PlaybackRingBuffer {
   constructor(capacitySamples) {
