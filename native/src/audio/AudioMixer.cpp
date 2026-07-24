@@ -1,5 +1,6 @@
 #include "AudioMixer.h"
 #include "../dsp/Const.h"
+#include "../util/Time.h"
 
 #include <gnuradio/io_signature.h>
 
@@ -16,6 +17,10 @@ namespace sdrscan {
 
 namespace {
 constexpr size_t kRingBufferCapacity = AUDIO_SAMPLERATE; // ~1s of audio per receiver
+// How stale lastHeartbeat_ can get before isAlive() reports the mixer as dead. The loop ticks
+// via yield() (no sleep), so a live thread updates this many times a second - a multi-second
+// timeout is already a generous margin for scheduling jitter, not a tight bound.
+constexpr double kHeartbeatTimeoutSeconds = 5.0;
 // Discard backlog beyond this to avoid unbounded latency buildup. Must stay comfortably above
 // AudioMixer::kTargetLatencySeconds's worth of samples, or this would trim away the deliberate
 // buffering margin that constant exists to maintain.
@@ -104,6 +109,12 @@ void AudioMixer::start() {
     mixThread_ = std::thread(&AudioMixer::run, this);
 }
 
+bool AudioMixer::isAlive() const {
+    double last = lastHeartbeat_;
+    if (last == 0.0) return true; // hasn't ticked yet - not the same as having gone dead
+    return (nowUnixSeconds() - last) < kHeartbeatTimeoutSeconds;
+}
+
 void AudioMixer::stop() {
     stopFlag_ = true;
     if (mixThread_.joinable()) mixThread_.join();
@@ -147,6 +158,8 @@ void AudioMixer::run() {
     auto lastStarvationReport = startTime;
 
     while (!stopFlag_) {
+        lastHeartbeat_ = nowUnixSeconds();
+
         for (int i = 0; i < numInputStreams_; i++) {
             std::vector<float> inBuf;
             int numRead = ringBuffers_[i]->read(inBuf);

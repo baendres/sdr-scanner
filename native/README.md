@@ -119,7 +119,13 @@ Single process, multiple threads (see also the comment block at the top of
   re-negotiation on the hardware source. Only a structural change to the window set itself
   (add/remove/edit a channel or receiver) tears down and rebuilds this flowgraph.
 - **One audio mixer thread** (`AudioMixer::run`): drains each receiver's ring buffer, mixes,
-  fans out to the configured `AudioOutput`s.
+  fans out to the configured `AudioOutput`s. Ticks a heartbeat every loop iteration;
+  `Scanner`'s maintenance loop watches it (`AudioMixer::isAlive()`) and, if it ever goes stale
+  (the thread hung or returned without an exception - port of Scanner.py's
+  `audioServerProcess.is_alive()` watchdog, adapted since this is a thread sharing the process
+  rather than a separate OS process), logs it and exits non-zero so the deployment's restart
+  policy recovers a silently-dead audio pipeline instead of leaving it stuck with everything
+  else (receivers, HTTP server) still running.
 - **HTTP server threads** (`HttpServer`, Boost.Beast, thread-per-connection): REST API,
   WebSocket control/status channel, and the static web UI.
 

@@ -13,12 +13,18 @@
 namespace {
 std::atomic<bool> g_stop{false};
 std::atomic<bool> g_restartRequested{false};
+std::atomic<bool> g_audioMixerDied{false};
 void handleSignal(int) { g_stop = true; }
 
 // Exit code used only for the "Restart Now" path (never for a plain SIGINT/SIGTERM stop) - see
 // the constructor comment below. Any non-zero value works; this one's arbitrary but distinct
 // from 1 (the generic "fatal error" path just below) so the two are distinguishable in logs.
 constexpr int kRestartRequestedExitCode = 75;
+// Exit code used when Scanner detects AudioMixer's thread has died (see
+// Scanner::setAudioMixerDiedCallback) - distinct from the other two for the same reason.
+// Non-zero for the same purpose as kRestartRequestedExitCode: `restart: on-failure` brings the
+// process back up automatically rather than leaving it silently dead with no audio output.
+constexpr int kAudioMixerDiedExitCode = 76;
 } // namespace
 
 int main(int argc, char** argv) {
@@ -69,6 +75,13 @@ int main(int argc, char** argv) {
         sdrscan::HttpServer httpServer(scanner, settings.httpHost, settings.httpPort, webRoot,
                                         []() { g_restartRequested = true; g_stop = true; });
 
+        // Port of Scanner.py's audioServerProcess.is_alive() watchdog - see
+        // Scanner::setAudioMixerDiedCallback's header comment. A dead audio pipeline with
+        // everything else (receivers, HTTP server) still running is a confusing, silently
+        // broken state - exiting non-zero here lets the deployment's restart policy recover it
+        // the same way the "Restart Now" button does, rather than leaving it stuck.
+        scanner.setAudioMixerDiedCallback([]() { g_audioMixerDied = true; g_stop = true; });
+
         scanner.start();
         httpServer.start();
 
@@ -85,5 +98,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (g_audioMixerDied) return kAudioMixerDiedExitCode;
     return g_restartRequested ? kRestartRequestedExitCode : 0;
 }

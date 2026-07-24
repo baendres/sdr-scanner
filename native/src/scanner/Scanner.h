@@ -52,6 +52,15 @@ public:
 
     void setEventCallback(std::function<void(const ScannerEvent&)> cb) { eventCallback_ = std::move(cb); }
 
+    // Notified if AudioMixer's thread is ever detected to have silently died (hung or returned
+    // without an exception - see AudioMixer::isAlive()'s header comment for why this can't
+    // just be "is the thread still running"). Port of Scanner.py's
+    // `if not self.audioServerProcess.is_alive(): ...` watchdog - there, a dead AudioServer
+    // subprocess left everything else running with silently-dead audio output, so it was
+    // treated as fatal and the whole scanner stopped. Optional; if unset, a dead mixer is
+    // still logged but nothing else acts on it.
+    void setAudioMixerDiedCallback(std::function<void()> cb) { audioMixerDiedCallback_ = std::move(cb); }
+
     ///
     // Hot updates - applied to every receiver's live copy of the channel with no flowgraph
     // restart, and persisted to the database. Throw std::runtime_error if the id is unknown.
@@ -127,6 +136,7 @@ private:
     std::unique_ptr<AudioMixer> audioMixer_;
 
     std::function<void(const ScannerEvent&)> eventCallback_;
+    std::function<void()> audioMixerDiedCallback_;
 
     std::atomic<bool> stopFlag_{false};
     std::thread maintenanceThread_;

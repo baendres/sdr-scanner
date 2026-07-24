@@ -69,6 +69,16 @@ public:
     void start();
     void stop();
 
+    // Port of Scanner.py's watchdog (`if not self.audioServerProcess.is_alive(): ...`) - there,
+    // AudioServer ran as its own OS process, so a silent death was directly observable via
+    // is_alive(). Here it's a thread sharing this process, so there's no equivalent "did it
+    // die" signal to query (an uncaught exception in this thread would call std::terminate()
+    // and abort the whole process anyway, taking everything down with it rather than dying
+    // quietly) - what heartbeat/isAlive() actually catches is the thread hanging or returning
+    // early without an exception, which wouldn't otherwise be detectable. Returns true before
+    // start() has had a chance to tick even once, so a fresh mixer isn't misreported as dead.
+    bool isAlive() const;
+
 private:
     void run();
 
@@ -78,6 +88,7 @@ private:
 
     std::thread mixThread_;
     std::atomic<bool> stopFlag_{false};
+    std::atomic<double> lastHeartbeat_{0.0};
 };
 
 } // namespace sdrscan

@@ -5,6 +5,7 @@
 #include "../audio/AudioOutput.h"
 
 #include <algorithm>
+#include <iostream>
 #include <set>
 #include <stdexcept>
 
@@ -469,6 +470,24 @@ void Scanner::onChannelStatus(ChannelStatusUpdate update) {
 
 void Scanner::runMaintenanceLoop() {
     while (!stopFlag_) {
+        // Port of Scanner.py's `if not self.audioServerProcess.is_alive(): ...` watchdog - see
+        // setAudioMixerDiedCallback's header comment for why this checks a heartbeat rather
+        // than "is the thread still running". Checked on this loop's existing ~5s cadence
+        // rather than a tighter one: this only ever fires on a genuine, rare failure, not a
+        // hot path worth optimizing the detection latency of.
+        //
+        // Deliberately doesn't set stopFlag_ or otherwise try to tear things down itself - that
+        // would make the real Scanner::stop() (called once the callback below causes the
+        // process to actually exit) see stopFlag_ already true and skip its own cleanup
+        // entirely (its guard against being run twice - see stop()'s first line). Just ends
+        // this loop and leaves the rest of shutdown to whoever handles the callback, the same
+        // pattern HttpServer's requestShutdown_ already uses.
+        if (audioMixer_ && !audioMixer_->isAlive()) {
+            std::cerr << "Scanner: AudioMixer not alive - stopping\n";
+            if (audioMixerDiedCallback_) audioMixerDiedCallback_();
+            break;
+        }
+
         double now = nowUnixSeconds();
         std::vector<ChannelConfig> reenabled;
         {

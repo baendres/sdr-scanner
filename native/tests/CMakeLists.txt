@@ -17,6 +17,7 @@ add_executable(sdrscan_tests
     test_icecast_output.cpp
     test_selector_hop.cpp
     test_protocol.cpp
+    test_audio_mixer_watchdog.cpp
 )
 target_link_libraries(sdrscan_tests PRIVATE sdrscan_core Catch2::Catch2WithMain)
 
