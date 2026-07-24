@@ -34,6 +34,7 @@ public:
                       double audioGain_dB,
                       double dwellTime_s,
                       int audioSampleRate,
+                      std::optional<double> squelchNoiseMargin_dB,
                       std::function<void(ChannelStatusUpdate)> statusCallback);
 
     const std::string& id() const { return channelId_; }
@@ -51,6 +52,15 @@ public:
     // No-op by default; only ChannelBlockFM supports CTCSS (it's an FM sub-audible-tone
     // scheme - AM/SSB/etc channel blocks don't have a meaningful implementation).
     virtual void setCtcssTone(std::optional<double> /*toneHz*/) {}
+
+    // Adaptive ("noise-relative") squelch: when set, the channel's effective squelch threshold
+    // tracks the live noise floor estimate (noiseFloor_dBFS_) plus this margin instead of a
+    // fixed absolute squelchThreshold_ - keeps squelch correctly calibrated as band conditions
+    // change (interference, time of day, ...) instead of needing to be re-tuned by hand as
+    // noise increases. Unset (the default) keeps today's fixed-threshold behavior. No-op by
+    // default; ChannelBlockFM/AM override to push a fresh threshold to their own squelch block
+    // whenever the noise floor estimate updates (see onNoiseFloorUpdated()).
+    virtual void setSquelchNoiseMargin(std::optional<double> /*marginDb*/) {}
 
     // Recomputes + reports (if changed) the channel's status; must be called periodically
     // (the Scanner polls this while a ScanWindow is running).
@@ -83,6 +93,26 @@ protected:
     void updateRSSI(float dBFS);
     void updateVolume(float dBFS);
 
+    // Returns the threshold that should currently apply: noiseFloor_dBFS_ + margin if adaptive
+    // squelch is on and a noise floor estimate exists yet, else the static squelchThreshold_
+    // (also used before the first noise-floor estimate arrives, or whenever adaptive mode is
+    // off). FM/AM's setSquelchNoiseMargin overrides read squelchNoiseMargin_dB_ directly rather
+    // than through this - it's provided for subclasses that want the resolved value in one call.
+    double effectiveSquelchThreshold() const;
+
+    // Called from updateRSSI() whenever the noise floor estimate changes and adaptive squelch
+    // is active, so a subclass can push a fresh threshold to its concrete squelch block. No-op
+    // by default (ChannelBlockEAS doesn't have its own squelch block - it delegates entirely to
+    // its internal ChannelBlockFM, which gets this call directly).
+    virtual void onNoiseFloorUpdated() {}
+
+    // Time-based debounce: filters brief noise spikes from being treated as a genuine
+    // open/close by requiring the raw squelch-open decision to persist for
+    // SQUELCH_DEBOUNCE_SECONDS before the reported/gated state follows it. Call once per
+    // getStatus() with the raw (undebounced) decision; the return value is what should
+    // actually drive both the real audio gate and computeAndReportStatus().
+    bool debounceSquelch(bool rawUnmuted);
+
     std::string channelId_;
     std::string label_;
     bool mute_;
@@ -90,9 +120,14 @@ protected:
     bool hold_;
     bool forceActive_ = false;
     double squelchThreshold_;
+    std::optional<double> squelchNoiseMargin_dB_;
     double audioGainFactor_;
     double dwellTime_s_;
     int audioSampleRate_;
+
+    bool debounceRawUnmuted_ = false;
+    double debounceRawChangedAt_ = 0.0;
+    bool debounceStableUnmuted_ = false;
 
     bool active_ = false;
     double lastActive_ = 0.0;

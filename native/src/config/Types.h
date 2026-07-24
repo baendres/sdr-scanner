@@ -65,6 +65,10 @@ struct ChannelConfig {
     double dwellTime_s = 3.0;
     double squelchThreshold = -55.0;
     std::optional<double> ctcssToneHz;   // unset = power-squelch only
+    // Adaptive ("noise-relative") squelch: when set, overrides squelchThreshold - the channel's
+    // effective threshold instead tracks its live noise floor estimate plus this margin. Unset
+    // = today's fixed-threshold behavior. See ChannelBlockBase::effectiveSquelchThreshold().
+    std::optional<double> squelchNoiseMargin_dB;
 
     bool enabled = true;
     std::optional<double> disableUntil; // unix time

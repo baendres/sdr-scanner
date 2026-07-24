@@ -9,6 +9,7 @@
 #include <gnuradio/blocks/complex_to_mag_squared.h>
 #include <gnuradio/filter/single_pole_iir_filter_ff.h>
 #include <gnuradio/blocks/keep_one_in_n.h>
+#include <gnuradio/blocks/mute.h>
 
 #include "ChannelBlockBase.h"
 
@@ -34,20 +35,27 @@ public:
                    int64_t hardwareFreq_hz,
                    int rfSampleRate,
                    int audioSampleRate,
+                   std::optional<double> squelchNoiseMargin_dB,
                    std::function<void(ChannelStatusUpdate)> statusCallback);
 
     void setForceActive(bool forceActive) override;
     void setSquelchValue(double squelchThreshold) override;
+    void setSquelchNoiseMargin(std::optional<double> marginDb) override;
     void setAudioGain(double audioGain_dB) override;
     ChannelStatus getStatus() override;
 
 private:
+    void onNoiseFloorUpdated() override;
+
     int rfSampleRate_;
 
     gr::filter::freq_xlating_fir_filter_ccf::sptr blockFreqXlatingFilter_;
     gr::analog::pwr_squelch_cc::sptr blockPowerSquelch_;
     gr::analog::feedforward_agc_cc::sptr blockAgc_;
     gr::blocks::complex_to_mag::sptr blockAmDemod_;
+    // Real inline gate driven from getStatus()'s debounced squelch decision (see
+    // ChannelBlockFM's blockAudioGate_ for the same pattern/reasoning).
+    gr::blocks::mute_ff::sptr blockAudioGate_;
     gr::filter::fir_filter_fff::sptr blockAudioFilter_;
     gr::blocks::multiply_const_ff::sptr blockAudioGain_;
 

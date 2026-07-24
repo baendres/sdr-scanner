@@ -13,6 +13,7 @@ add_executable(sdrscan_tests
     test_channel_fm.cpp
     test_channel_eas.cpp
     test_ctcss_squelch.cpp
+    test_squelch_debounce.cpp
     test_scanner_config.cpp
     test_icecast_output.cpp
     test_selector_hop.cpp

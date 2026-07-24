@@ -10,6 +10,13 @@ constexpr int MAX_RF_SAMPLERATE = 2'500'000;
 // Squelch averaging filter time constant.
 constexpr double SQUELCH_TC = 0.0125;
 
+// How long the raw squelch-open/closed decision must persist before it's treated as a genuine
+// transition (drives both the reported status and the actual audio gate - see
+// ChannelBlockBase::debounceSquelch()). Filters brief noise spikes from opening/closing the
+// squelch on their own; not user-configurable, this is closer to a real analog squelch
+// circuit's hang time than a per-channel tuning knob.
+constexpr double SQUELCH_DEBOUNCE_SECONDS = 0.05;
+
 // RSSI LowPass RC filter alpha.
 constexpr double RSSI_LOWPASS_TC = 0.125;
 constexpr double RSSI_UPDATE_FREQ_HZ = 4.0;

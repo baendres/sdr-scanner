@@ -16,6 +16,7 @@ ChannelBlockBase::ChannelBlockBase(const std::string& channelId,
                                     double audioGain_dB,
                                     double dwellTime_s,
                                     int audioSampleRate,
+                                    std::optional<double> squelchNoiseMargin_dB,
                                     std::function<void(ChannelStatusUpdate)> statusCallback)
     : gr::hier_block2("Channel",
                        gr::io_signature::make(1, 1, sizeof(gr_complex)),
@@ -26,6 +27,7 @@ ChannelBlockBase::ChannelBlockBase(const std::string& channelId,
       solo_(solo),
       hold_(hold),
       squelchThreshold_(squelchThreshold),
+      squelchNoiseMargin_dB_(squelchNoiseMargin_dB),
       audioGainFactor_(dbToRatio(audioGain_dB)),
       dwellTime_s_(dwellTime_s),
       audioSampleRate_(audioSampleRate),
@@ -52,7 +54,27 @@ void ChannelBlockBase::updateRSSI(float dBFS) {
         } else {
             noiseFloor_dBFS_ = (NOISEFLOOR_LOWPASS_A * dBFS) + ((1 - NOISEFLOOR_LOWPASS_A) * (*noiseFloor_dBFS_));
         }
+        if (squelchNoiseMargin_dB_.has_value()) onNoiseFloorUpdated();
     }
+}
+
+double ChannelBlockBase::effectiveSquelchThreshold() const {
+    if (squelchNoiseMargin_dB_.has_value() && noiseFloor_dBFS_.has_value()) {
+        return static_cast<double>(*noiseFloor_dBFS_) + *squelchNoiseMargin_dB_;
+    }
+    return squelchThreshold_;
+}
+
+bool ChannelBlockBase::debounceSquelch(bool rawUnmuted) {
+    double now = nowUnixSeconds();
+    if (rawUnmuted != debounceRawUnmuted_) {
+        debounceRawUnmuted_ = rawUnmuted;
+        debounceRawChangedAt_ = now;
+    }
+    if (rawUnmuted != debounceStableUnmuted_ && (now - debounceRawChangedAt_) >= SQUELCH_DEBOUNCE_SECONDS) {
+        debounceStableUnmuted_ = rawUnmuted;
+    }
+    return debounceStableUnmuted_;
 }
 
 void ChannelBlockBase::updateVolume(float dBFS) {

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS channels (
     dwell_time_s      REAL NOT NULL DEFAULT 3.0,
     squelch_threshold REAL NOT NULL DEFAULT -55,
     ctcss_tone_hz     REAL,
+    squelch_noise_margin_db REAL,
     enabled           INTEGER NOT NULL DEFAULT 1,
     disable_until     REAL,
     mute              INTEGER NOT NULL DEFAULT 0,
@@ -108,6 +109,14 @@ private:
     sqlite3_stmt* stmt_ = nullptr;
 };
 
+bool columnExists(sqlite3* db, const std::string& table, const std::string& column) {
+    Stmt s(db, "PRAGMA table_info(" + table + ")");
+    while (s.step()) {
+        if (s.colText(1) == column) return true; // column index 1 = name
+    }
+    return false;
+}
+
 } // namespace
 
 Database::Database(const std::string& path) {
@@ -136,6 +145,11 @@ void Database::exec(const std::string& sql) {
 void Database::initSchema() {
     std::lock_guard<std::mutex> lock(mutex_);
     exec(kSchemaSql);
+    // CREATE TABLE IF NOT EXISTS above only covers a fresh database - an existing one (from
+    // before this column existed) needs an explicit migration to pick it up.
+    if (!columnExists(db_, "channels", "squelch_noise_margin_db")) {
+        exec("ALTER TABLE channels ADD COLUMN squelch_noise_margin_db REAL");
+    }
 }
 
 bool Database::isEmpty() {
@@ -182,12 +196,13 @@ ChannelConfig rowToChannel(const Stmt& s) {
     cc.dwellTime_s = s.colDouble(5);
     cc.squelchThreshold = s.colDouble(6);
     cc.ctcssToneHz = s.colNullableDouble(7);
-    cc.enabled = s.colInt(8) != 0;
-    cc.disableUntil = s.colNullableDouble(9);
-    cc.mute = s.colInt(10) != 0;
-    cc.solo = s.colNullableBool(11);
-    cc.hold = s.colInt(12) != 0;
-    cc.sortOrder = s.colInt(13);
+    cc.squelchNoiseMargin_dB = s.colNullableDouble(8);
+    cc.enabled = s.colInt(9) != 0;
+    cc.disableUntil = s.colNullableDouble(10);
+    cc.mute = s.colInt(11) != 0;
+    cc.solo = s.colNullableBool(12);
+    cc.hold = s.colInt(13) != 0;
+    cc.sortOrder = s.colInt(14);
     return cc;
 }
 } // namespace
@@ -196,7 +211,7 @@ std::vector<ChannelConfig> Database::listChannels() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<ChannelConfig> out;
     Stmt s(db_, "SELECT id, freq_hz, label, mode, audio_gain_db, dwell_time_s, squelch_threshold, "
-                "ctcss_tone_hz, enabled, disable_until, mute, solo, hold, sort_order "
+                "ctcss_tone_hz, squelch_noise_margin_db, enabled, disable_until, mute, solo, hold, sort_order "
                 "FROM channels ORDER BY sort_order, freq_hz");
     while (s.step()) out.push_back(rowToChannel(s));
     return out;
@@ -206,11 +221,12 @@ void Database::upsertChannel(const ChannelConfig& cc) {
     std::lock_guard<std::mutex> lock(mutex_);
     Stmt s(db_,
         "INSERT INTO channels(id, freq_hz, label, mode, audio_gain_db, dwell_time_s, squelch_threshold, "
-        "ctcss_tone_hz, enabled, disable_until, mute, solo, hold, sort_order) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ctcss_tone_hz, squelch_noise_margin_db, enabled, disable_until, mute, solo, hold, sort_order) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET freq_hz=excluded.freq_hz, label=excluded.label, mode=excluded.mode, "
         "audio_gain_db=excluded.audio_gain_db, dwell_time_s=excluded.dwell_time_s, "
         "squelch_threshold=excluded.squelch_threshold, ctcss_tone_hz=excluded.ctcss_tone_hz, "
+        "squelch_noise_margin_db=excluded.squelch_noise_margin_db, "
         "enabled=excluded.enabled, disable_until=excluded.disable_until, mute=excluded.mute, "
         "solo=excluded.solo, hold=excluded.hold, sort_order=excluded.sort_order");
     s.bindText(1, cc.id);
@@ -221,12 +237,13 @@ void Database::upsertChannel(const ChannelConfig& cc) {
     s.bindDouble(6, cc.dwellTime_s);
     s.bindDouble(7, cc.squelchThreshold);
     s.bindNullableDouble(8, cc.ctcssToneHz);
-    s.bindInt(9, cc.enabled ? 1 : 0);
-    s.bindNullableDouble(10, cc.disableUntil);
-    s.bindInt(11, cc.mute ? 1 : 0);
-    if (cc.solo.has_value()) s.bindInt(12, *cc.solo ? 1 : 0); else s.bindNull(12);
-    s.bindInt(13, cc.hold ? 1 : 0);
-    s.bindInt(14, cc.sortOrder);
+    s.bindNullableDouble(9, cc.squelchNoiseMargin_dB);
+    s.bindInt(10, cc.enabled ? 1 : 0);
+    s.bindNullableDouble(11, cc.disableUntil);
+    s.bindInt(12, cc.mute ? 1 : 0);
+    if (cc.solo.has_value()) s.bindInt(13, *cc.solo ? 1 : 0); else s.bindNull(13);
+    s.bindInt(14, cc.hold ? 1 : 0);
+    s.bindInt(15, cc.sortOrder);
     s.step();
 }
 

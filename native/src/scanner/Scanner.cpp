@@ -135,7 +135,10 @@ void Scanner::updateChannel(const std::string& channelId,
 void Scanner::setChannelSquelch(const std::string& channelId, double squelchThreshold) {
     updateChannel(
         channelId,
-        [&](ChannelConfig& cc) { cc.squelchThreshold = squelchThreshold; },
+        // An explicit absolute value wins over adaptive mode - mirrors ChannelBlockBase's own
+        // setSquelchValue() clearing squelchNoiseMargin_dB_, so the persisted config and the
+        // live block stay in sync (see ChannelConfig::squelchNoiseMargin_dB).
+        [&](ChannelConfig& cc) { cc.squelchThreshold = squelchThreshold; cc.squelchNoiseMargin_dB.reset(); },
         [](ChannelBlockBase& block, const ChannelConfig& cc) { block.setSquelchValue(cc.squelchThreshold); });
 }
 
@@ -144,6 +147,13 @@ void Scanner::setChannelCtcssTone(const std::string& channelId, std::optional<do
         channelId,
         [&](ChannelConfig& cc) { cc.ctcssToneHz = toneHz; },
         [](ChannelBlockBase& block, const ChannelConfig& cc) { block.setCtcssTone(cc.ctcssToneHz); });
+}
+
+void Scanner::setChannelSquelchNoiseMargin(const std::string& channelId, std::optional<double> marginDb) {
+    updateChannel(
+        channelId,
+        [&](ChannelConfig& cc) { cc.squelchNoiseMargin_dB = marginDb; },
+        [](ChannelBlockBase& block, const ChannelConfig& cc) { block.setSquelchNoiseMargin(cc.squelchNoiseMargin_dB); });
 }
 
 void Scanner::setChannelAudioGain(const std::string& channelId, double audioGain_dB) {

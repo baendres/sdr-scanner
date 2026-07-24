@@ -13,12 +13,44 @@
 #include <gnuradio/blocks/head.h>
 #include <gnuradio/blocks/null_sink.h>
 #include <gnuradio/blocks/vector_sink.h>
+#include <gnuradio/blocks/vector_source.h>
+
+#include <chrono>
+#include <cmath>
+#include <thread>
 
 #include "../src/dsp/ChannelBlockFM.h"
 
 using namespace sdrscan;
 
 namespace {
+
+// A constant-envelope complex tone segment (a rotating phasor, |sample| == amplitude for every
+// sample) - simpler to reason about than a real cosine for power-based squelch/RSSI checks,
+// since its instantaneous power is exactly amplitude^2 with no time-varying envelope to average
+// out first.
+std::vector<gr_complex> makeToneSegment(double freqHz, float amplitude, double durationSec, int sampleRate) {
+    size_t n = static_cast<size_t>(durationSec * sampleRate);
+    std::vector<gr_complex> out(n);
+    double phaseStep = 2.0 * M_PI * freqHz / sampleRate;
+    for (size_t i = 0; i < n; i++) {
+        double phase = phaseStep * static_cast<double>(i);
+        out[i] = gr_complex(amplitude * std::cos(phase), amplitude * std::sin(phase));
+    }
+    return out;
+}
+
+// getStatus() debounces the raw squelch reading (SQUELCH_DEBOUNCE_SECONDS) rather than acting
+// on it instantly - a real transition only sticks once observed as persisting across two polls,
+// same as the Scanner's own ~100ms polling loop. A single post-run() getStatus() call would
+// therefore always see the *old* stable state for whatever just transitioned; this mirrors the
+// real polling pattern by priming the transition and then re-checking once the debounce window
+// has elapsed.
+ChannelStatus settledStatus(const std::shared_ptr<ChannelBlockFM>& channel) {
+    channel->getStatus();
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    return channel->getStatus();
+}
 
 ChannelStatus runTrial(float carrierAmplitude, double squelchThreshold_dB, std::optional<double> ctcssToneHz = std::nullopt) {
     constexpr int rfSampleRate = 240'000; // multiple of AUDIO_SAMPLERATE (16000)
@@ -39,7 +71,7 @@ ChannelStatus runTrial(float carrierAmplitude, double squelchThreshold_dB, std::
         "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         squelchThreshold_dB, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
         /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
-        /*deviation_hz=*/2500, ctcssToneHz, [](ChannelStatusUpdate) {});
+        /*deviation_hz=*/2500, ctcssToneHz, /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
 
     tb->connect(carrier, 0, add, 0);
     tb->connect(noise, 0, add, 1);
@@ -49,7 +81,7 @@ ChannelStatus runTrial(float carrierAmplitude, double squelchThreshold_dB, std::
 
     tb->run();
 
-    return channel->getStatus();
+    return settledStatus(channel);
 }
 
 } // namespace
@@ -73,7 +105,7 @@ TEST_CASE("ChannelBlockFM forceActive opens squelch regardless of signal strengt
 
     auto channel = gnuradio::make_block_sptr<ChannelBlockFM>(
         "test-channel", "Test", false, std::nullopt, false, -20.0, 0.0, 3.0, 0, 0,
-        rfSampleRate, audioSampleRate, 2500, std::nullopt, [](ChannelStatusUpdate) {});
+        rfSampleRate, audioSampleRate, 2500, std::nullopt, std::nullopt, [](ChannelStatusUpdate) {});
     channel->setForceActive(true);
 
     tb->connect(carrier, 0, head, 0);
@@ -106,7 +138,7 @@ TEST_CASE("ChannelBlockFM passes real audio through when CTCSS is not configured
         "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*squelchThreshold_dB=*/-20.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
         /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
-        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, [](ChannelStatusUpdate) {});
+        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
 
     tb->connect(carrier, 0, add, 0);
     tb->connect(noise, 0, add, 1);
@@ -115,11 +147,69 @@ TEST_CASE("ChannelBlockFM passes real audio through when CTCSS is not configured
     tb->connect(channel, 0, sink, 0);
 
     tb->run();
-    CHECK(channel->getStatus() == ChannelStatus::ACTIVE);
+    CHECK(settledStatus(channel) == ChannelStatus::ACTIVE);
 
     const auto& samples = sink->data();
     REQUIRE(!samples.empty());
     double energy = 0.0;
     for (float s : samples) energy += static_cast<double>(s) * s;
     CHECK(energy > 0.0);
+}
+
+TEST_CASE("Adaptive squelch opens based on the live noise floor plus margin, not the fixed threshold") {
+    constexpr int rfSampleRate = 240'000;
+    constexpr int audioSampleRate = 16'000;
+
+    // Phase 1: a weak tone standing in for the band's quiet noise floor (~-60 dBFS). Long enough
+    // to seed noiseFloor_dBFS_ from at least one RSSI update (needs >= 4000 fmQuadRate_ samples,
+    // i.e. >= 0.25s of RF time here - see ChannelBlockBase::updateRSSI/RSSI_UPDATE_FREQ_HZ).
+    auto quiet = makeToneSegment(1000.0, 0.001f, 0.4, rfSampleRate);
+    // Phase 2: a moderate signal (~-34 dBFS) - clearly 26dB above the phase-1 noise floor (and
+    // therefore above noiseFloor+margin), but nowhere near the deliberately absurd fixed
+    // squelchThreshold below, so only adaptive mode can open the squelch here.
+    auto signal = makeToneSegment(1000.0, 0.02f, 0.3, rfSampleRate);
+    std::vector<gr_complex> samples = quiet;
+    samples.insert(samples.end(), signal.begin(), signal.end());
+
+    auto tb = gr::make_top_block("test-adaptive-squelch");
+    auto source = gr::blocks::vector_source_c::make(samples, false);
+    auto sink = gr::blocks::null_sink::make(sizeof(float));
+
+    auto channel = gnuradio::make_block_sptr<ChannelBlockFM>(
+        "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
+        /*squelchThreshold_dB=*/100.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
+        /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
+        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/6.0, [](ChannelStatusUpdate) {});
+
+    tb->connect(source, 0, channel, 0);
+    tb->connect(channel, 0, sink, 0);
+    tb->run();
+
+    CHECK(settledStatus(channel) == ChannelStatus::ACTIVE);
+}
+
+TEST_CASE("Without adaptive squelch configured, the same moderate signal stays squelched under a high fixed threshold") {
+    constexpr int rfSampleRate = 240'000;
+    constexpr int audioSampleRate = 16'000;
+
+    auto quiet = makeToneSegment(1000.0, 0.001f, 0.4, rfSampleRate);
+    auto signal = makeToneSegment(1000.0, 0.02f, 0.3, rfSampleRate);
+    std::vector<gr_complex> samples = quiet;
+    samples.insert(samples.end(), signal.begin(), signal.end());
+
+    auto tb = gr::make_top_block("test-adaptive-squelch-control");
+    auto source = gr::blocks::vector_source_c::make(samples, false);
+    auto sink = gr::blocks::null_sink::make(sizeof(float));
+
+    auto channel = gnuradio::make_block_sptr<ChannelBlockFM>(
+        "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
+        /*squelchThreshold_dB=*/100.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
+        /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
+        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
+
+    tb->connect(source, 0, channel, 0);
+    tb->connect(channel, 0, sink, 0);
+    tb->run();
+
+    CHECK(settledStatus(channel) == ChannelStatus::IDLE);
 }

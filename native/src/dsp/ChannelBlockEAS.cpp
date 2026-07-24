@@ -28,9 +28,10 @@ ChannelBlockEAS::ChannelBlockEAS(const std::string& channelId,
                                   int audioSampleRate,
                                   int deviation_hz,
                                   std::vector<double> alertTonesHz,
+                                  std::optional<double> squelchNoiseMargin_dB,
                                   std::function<void(ChannelStatusUpdate)> statusCallback)
     : ChannelBlockBase(channelId, label, mute, solo, hold, squelchThreshold, audioGain_dB,
-                        dwellTime_s, audioSampleRate, std::move(statusCallback)) {
+                        dwellTime_s, audioSampleRate, squelchNoiseMargin_dB, std::move(statusCallback)) {
 
     // The internal FM block's own mute/solo/hold/status-callback are never driven or consulted
     // (this class owns those concerns at the EAS level - see setForceActive()/getStatus()); it
@@ -40,7 +41,7 @@ ChannelBlockEAS::ChannelBlockEAS(const std::string& channelId,
         channelId, label, /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         squelchThreshold, audioGain_dB, dwellTime_s, channelFreq_hz, hardwareFreq_hz,
         rfSampleRate, audioSampleRate, deviation_hz, /*ctcssToneHz=*/std::nullopt,
-        [](ChannelStatusUpdate) {});
+        squelchNoiseMargin_dB, [](ChannelStatusUpdate) {});
 
     blockStreamToVector_ = gr::blocks::stream_to_vector::make(sizeof(float), kFftSize);
     blockToneDetect_ = gnuradio::make_block_sptr<EasToneDetectBlock>(
@@ -89,7 +90,13 @@ void ChannelBlockEAS::setForceActive(bool forceActive) {
 
 void ChannelBlockEAS::setSquelchValue(double squelchThreshold) {
     squelchThreshold_ = squelchThreshold;
+    squelchNoiseMargin_dB_.reset(); // mirrors ChannelBlockFM/AM - see the note there
     blockFm_->setSquelchValue(squelchThreshold);
+}
+
+void ChannelBlockEAS::setSquelchNoiseMargin(std::optional<double> marginDb) {
+    squelchNoiseMargin_dB_ = marginDb;
+    blockFm_->setSquelchNoiseMargin(marginDb);
 }
 
 void ChannelBlockEAS::setAudioGain(double audioGain_dB) {

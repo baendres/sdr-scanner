@@ -50,6 +50,7 @@ inline json channelConfigToJson(const ChannelConfig& cc) {
         {"audioGain_dB", cc.audioGain_dB},
         {"squelchThreshold", cc.squelchThreshold},
         {"ctcssToneHz", cc.ctcssToneHz.has_value() ? json(*cc.ctcssToneHz) : json(nullptr)},
+        {"squelchNoiseMargin_dB", cc.squelchNoiseMargin_dB.has_value() ? json(*cc.squelchNoiseMargin_dB) : json(nullptr)},
         {"enabled", cc.enabled},
         {"disableUntil", cc.disableUntil.has_value() ? json(*cc.disableUntil) : json(nullptr)},
         {"mute", cc.mute},
@@ -133,6 +134,9 @@ inline ChannelConfig channelConfigFromJson(const json& j) {
     cc.squelchThreshold = j.value("squelchThreshold", -55.0);
     if (j.contains("ctcssToneHz") && !j.at("ctcssToneHz").is_null()) {
         cc.ctcssToneHz = j.at("ctcssToneHz").get<double>();
+    }
+    if (j.contains("squelchNoiseMargin_dB") && !j.at("squelchNoiseMargin_dB").is_null()) {
+        cc.squelchNoiseMargin_dB = j.at("squelchNoiseMargin_dB").get<double>();
     }
     return cc;
 }

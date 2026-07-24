@@ -40,9 +40,10 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
                                 int audioSampleRate,
                                 int deviation_hz,
                                 std::optional<double> ctcssToneHz,
+                                std::optional<double> squelchNoiseMargin_dB,
                                 std::function<void(ChannelStatusUpdate)> statusCallback)
     : ChannelBlockBase(channelId, label, mute, solo, hold, squelchThreshold, audioGain_dB,
-                        dwellTime_s, audioSampleRate, std::move(statusCallback)),
+                        dwellTime_s, audioSampleRate, squelchNoiseMargin_dB, std::move(statusCallback)),
       deviation_hz_(deviation_hz),
       rfSampleRate_(rfSampleRate),
       ctcssToneHz_(ctcssToneHz) {
@@ -92,7 +93,7 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
         rfSampleRate_);
 
     blockPowerSquelch_ = gr::analog::pwr_squelch_cc::make(
-        squelchThreshold_, 1.0 / (fmQuadRate_ * SQUELCH_TC), 0, false);
+        effectiveSquelchThreshold(), 1.0 / (fmQuadRate_ * SQUELCH_TC), 0, false);
 
     double demodGain = fmQuadRate_ / (2.0 * M_PI * deviation_hz_);
     blockQuadDemod_ = gr::analog::quadrature_demod_cf::make(demodGain);
@@ -105,7 +106,7 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
         fmQuadRate_, static_cast<float>(ctcssToneHz_.value_or(100.0)), 0.0f, 0, 0, false);
     applyCtcssLevel();
     blockCtcssSquelchSink_ = gr::blocks::null_sink::make(sizeof(float));
-    blockCtcssGate_ = gr::blocks::mute_ff::make(false);
+    blockAudioGate_ = gr::blocks::mute_ff::make(false);
 
     ///
     // Audio filter + gain
@@ -135,11 +136,11 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     connect(blockPowerSquelch_, 0, blockQuadDemod_, 0);
     connect(blockQuadDemod_, 0, blockDeemph_, 0);
     // blockCtcssSquelch_ is a side tap (status only, see the header note) - the real audio path
-    // runs through blockCtcssGate_ instead, which we drive explicitly from getStatus().
+    // runs through blockAudioGate_ instead, which we drive explicitly from getStatus().
     connect(blockDeemph_, 0, blockCtcssSquelch_, 0);
     connect(blockCtcssSquelch_, 0, blockCtcssSquelchSink_, 0);
-    connect(blockDeemph_, 0, blockCtcssGate_, 0);
-    connect(blockCtcssGate_, 0, blockAudioFilter_, 0);
+    connect(blockDeemph_, 0, blockAudioGate_, 0);
+    connect(blockAudioGate_, 0, blockAudioFilter_, 0);
     connect(blockAudioFilter_, 0, blockAudioGain_, 0);
     connect(blockAudioGain_, 0, blockAudioMute_, 0);
 
@@ -168,14 +169,30 @@ void ChannelBlockFM::setForceActive(bool forceActive) {
     if (forceActive) {
         blockPowerSquelch_->set_threshold(-150.0);
     } else {
-        blockPowerSquelch_->set_threshold(squelchThreshold_);
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
     }
 }
 
 void ChannelBlockFM::setSquelchValue(double squelchThreshold) {
     squelchThreshold_ = squelchThreshold;
+    // An explicit absolute value is a deliberate "use exactly this threshold" action - it wins
+    // over adaptive mode rather than being silently ignored by it.
+    squelchNoiseMargin_dB_.reset();
     if (!forceActive_) {
-        blockPowerSquelch_->set_threshold(squelchThreshold_);
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
+    }
+}
+
+void ChannelBlockFM::setSquelchNoiseMargin(std::optional<double> marginDb) {
+    squelchNoiseMargin_dB_ = marginDb;
+    if (!forceActive_) {
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
+    }
+}
+
+void ChannelBlockFM::onNoiseFloorUpdated() {
+    if (!forceActive_) {
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
     }
 }
 
@@ -194,11 +211,15 @@ ChannelStatus ChannelBlockFM::getStatus() {
     // CTCSS only gates when actually configured (and never overrides forceActive) - see the
     // note in applyCtcssLevel() for why we don't rely on level==0 to mean "always passes".
     bool ctcssOk = forceActive_ || !ctcssToneHz_.has_value() || blockCtcssSquelch_->unmuted();
-    // Drive the real inline gate from this same decision (see the header note on
-    // blockCtcssGate_/blockCtcssSquelch_) - this is polled roughly every ms from the
-    // receiver's scheduling loop, plenty responsive for a sub-audible tone gate.
-    blockCtcssGate_->set_mute(!ctcssOk);
-    bool unmuted = blockPowerSquelch_->unmuted() && ctcssOk;
+    bool rawUnmuted = blockPowerSquelch_->unmuted() && ctcssOk;
+    // Debounce filters brief noise spikes from opening/closing the channel on their own (see
+    // SQUELCH_DEBOUNCE_SECONDS) - this is what actually drives real audio (blockAudioGate_,
+    // polled roughly every ms from the receiver's scheduling loop) as well as the reported
+    // status, so a spike that doesn't persist never reaches the listener as a pop. forceActive
+    // is an explicit operator override, not a squelch reading, so it bypasses the debounce
+    // rather than waiting out its hang time before taking effect.
+    bool unmuted = forceActive_ ? true : debounceSquelch(rawUnmuted);
+    blockAudioGate_->set_mute(!unmuted);
     return computeAndReportStatus(unmuted);
 }
 

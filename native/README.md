@@ -145,8 +145,8 @@ Client -> HttpServer -> Scanner::setChannelX(...) -> write-through to SQLite
 
 Two tiers:
 
-- **Hot** (no interruption): squelch threshold, CTCSS tone, audio gain, dwell time,
-  mute/solo/hold/enabled/forceActive.
+- **Hot** (no interruption): squelch threshold, adaptive squelch margin, CTCSS tone, audio
+  gain, dwell time, mute/solo/hold/enabled/forceActive.
 - **Structural** (brief in-process rebuild on the affected receiver(s), still zero container
   restart): add/remove a channel, change frequency, change `maxChannelsPerWindow`. This calls
   `Scanner::buildWindows()`, which mirrors the Python version's window-building algorithm but
@@ -178,6 +178,35 @@ genuinely quiet moment) reads `unmuted() == false` even at level 0, because the 
 comparison is strict (`energy > level`). The fix (see `ChannelBlockFM::getStatus()`) is to
 simply not consult the CTCSS block's `unmuted()` at all unless a tone is actually configured
 (or the channel is force-active), rather than relying on the block to self-disable.
+
+### Adaptive squelch and squelch debounce
+
+Two independent additions to the squelch path, both aimed at handling noisier band conditions
+than a single fixed threshold tolerates well:
+
+- **Adaptive ("noise-relative") squelch** - a channel's `squelchNoiseMargin_dB` config field
+  (unset by default) overrides `squelchThreshold`: when set, the effective threshold tracks the
+  channel's own live noise floor estimate (`noiseFloor_dBFS_`, already computed for telemetry -
+  see `updateRSSI()`) plus this margin, instead of a fixed dB value that needs to be re-tuned by
+  hand as interference or time-of-day conditions change. `ChannelBlockBase::
+  effectiveSquelchThreshold()` resolves which one actually applies; it falls back to the fixed
+  `squelchThreshold` until a noise floor estimate exists yet (nothing to be adaptive relative to)
+  or whenever no margin is configured. Setting an explicit `squelchThreshold` via the API clears
+  the margin and vice versa in spirit (the margin isn't cleared by a squelch write, but
+  `effectiveSquelchThreshold()` treats them as alternate modes, not additive) - only one is ever
+  actually in effect at a time. `ChannelBlockEAS` doesn't have a squelch block of its own; it
+  just forwards the margin to its internal `ChannelBlockFM`.
+- **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
+  squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
+  treated as a genuine transition, filtering brief noise spikes that would otherwise pop the
+  audio gate open and shut. It drives the *real* audio gate (a `mute_ff` block downstream of the
+  demod, e.g. `ChannelBlockFM::blockAudioGate_`), not just the reported status - so a spike that
+  doesn't persist never reaches a listener as an audible pop, it isn't just hidden from the UI.
+  This is a fixed DSP constant rather than a per-channel setting - closer to a real analog
+  squelch circuit's hang time than something that needs per-channel tuning. It's wall-clock
+  based (`nowUnixSeconds()`), matching how `Scanner` actually polls `getStatus()` every ~100ms in
+  production; a `forceActive` operator override bypasses it entirely (an explicit "make this
+  audible now" action shouldn't wait out a squelch hang time).
 
 ### NOAA / BFM_EAS (attention-tone) channel modes
 
@@ -232,11 +261,13 @@ has needed that granularity yet.
 
 - `GET /api/state` - full snapshot (channels, receivers, outputs, scanner settings, live
   channel statuses).
-- `PATCH /api/channels/{id}` - body may include any of: `squelchThreshold`, `ctcssToneHz`
-  (number or `null` to disable), `audioGain_dB`, `dwellTime_s`, `mute`, `solo` (`true`/`false`/
-  `null`), `hold`, `forceActive`, `enabled`, `disableUntil` (unix seconds).
+- `PATCH /api/channels/{id}` - body may include any of: `squelchThreshold`,
+  `squelchNoiseMargin_dB` (number or `null` to go back to a fixed `squelchThreshold` - see
+  "Adaptive squelch" above), `ctcssToneHz` (number or `null` to disable), `audioGain_dB`,
+  `dwellTime_s`, `mute`, `solo` (`true`/`false`/`null`), `hold`, `forceActive`, `enabled`,
+  `disableUntil` (unix seconds).
 - `POST /api/channels` - body: `{freq_hz, label?, mode?, audioGain_dB?, dwellTime_s?,
-  squelchThreshold?, ctcssToneHz?}` -> `{id}`.
+  squelchThreshold?, squelchNoiseMargin_dB?, ctcssToneHz?}` -> `{id}`.
 - `DELETE /api/channels/{id}`
 - `PATCH /api/scanner` - body: `{maxChannelsPerWindow}`
 - `GET /api/receivers/scan` - enumerates connected SDR hardware (`SoapySDR::Device::enumerate()`
@@ -249,8 +280,8 @@ has needed that granularity yet.
 `ChannelStatus` / `ScanWindowStart` / `ScanWindowDone` / `ScanWindowConfigsChanged` messages.
 Accepts the same control messages as the REST PATCH fields, as `{"type": "...", "data": {...}}`
 - e.g. `ChannelMute`, `ChannelHold`, `ChannelSolo`, `ChannelEnable`, `ChannelDisableUntil`,
-`ChannelForceActive`, `ChannelSetSquelch`, `ChannelSetCtcss`, `ChannelSetAudioGain`,
-`ChannelSetDwellTime`.
+`ChannelForceActive`, `ChannelSetSquelch`, `ChannelSetSquelchNoiseMargin`, `ChannelSetCtcss`,
+`ChannelSetAudioGain`, `ChannelSetDwellTime`.
 
 Note: the Python web UI had grown a PIN-based "listen only vs. control" access gate
 (`SDRSCANNER_CONTROL_PIN`). That's not reimplemented here yet - every connected client can
@@ -270,11 +301,17 @@ handle it at a reverse-proxy layer in front of this.
 ## Testing without SDR hardware
 
 `tests/test_channel_fm.cpp`, `tests/test_ctcss_squelch.cpp`, and `tests/test_channel_eas.cpp`
-build small synthetic flowgraphs (`gr::analog::sig_source_c` / `frequency_modulator_fc`
-standing in for a receiver) feeding directly into `ChannelBlockFM`/`ChannelBlockAM`/
-`ChannelBlockEAS`, and assert on squelch/CTCSS/tone-detect open-closed behavior - this is what
-caught the CTCSS bug described above. `test_database.cpp`
+build small synthetic flowgraphs (`gr::analog::sig_source_c` / `frequency_modulator_fc` /
+`vector_source_c` standing in for a receiver) feeding directly into
+`ChannelBlockFM`/`ChannelBlockAM`/`ChannelBlockEAS`, and assert on squelch/CTCSS/tone-detect
+open-closed behavior - this is what caught the CTCSS bug described above.
+`tests/test_squelch_debounce.cpp` covers the adaptive squelch and debounce logic (see above)
+directly against `ChannelBlockBase` through a trivial concrete subclass, rather than through a
+flowgraph - `debounceSquelch()` is wall-clock based, and a flowgraph's `tb->run()` processes
+samples as fast as the CPU allows rather than in real time, so there'd be no reliable way to
+land inside or outside the debounce window from flowgraph sample counts alone. `test_database.cpp`
 round-trips config through SQLite, including reopening the database to prove settings survive
-a process restart. Actually receiving RF and playing audio needs real (or SoapyRemote) SDR
-hardware, which isn't available in a CI/dev-container sandbox - verify that part on your own
-receiver.
+a process restart, and migrating a pre-existing database created before a column existed (the
+same situation an already-deployed instance is in after a schema change like this one).
+Actually receiving RF and playing audio needs real (or SoapyRemote) SDR hardware, which isn't
+available in a CI/dev-container sandbox - verify that part on your own receiver.

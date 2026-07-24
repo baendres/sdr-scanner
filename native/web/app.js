@@ -25,9 +25,12 @@ const btnEnable = document.getElementById("btnEnable");
 const btnDisable1h = document.getElementById("btnDisable1h");
 
 const squelchInput = document.getElementById("squelchInput");
+const squelchMarginInput = document.getElementById("squelchMarginInput");
 const ctcssInput = document.getElementById("ctcssInput");
 const gainInput = document.getElementById("gainInput");
 const btnSquelchApply = document.getElementById("btnSquelchApply");
+const btnSquelchMarginApply = document.getElementById("btnSquelchMarginApply");
+const btnSquelchMarginClear = document.getElementById("btnSquelchMarginClear");
 const btnCtcssApply = document.getElementById("btnCtcssApply");
 const btnCtcssClear = document.getElementById("btnCtcssClear");
 const btnGainApply = document.getElementById("btnGainApply");
@@ -194,7 +197,7 @@ function updateSelectedButtons() {
 
   if (!selectedId) {
     selMeta.textContent = "None";
-    [btnHold, btnSolo, btnMute, btnForce, btnEnable, btnDisable1h, btnSquelchApply, btnCtcssApply, btnCtcssClear, btnGainApply].forEach(b => {
+    [btnHold, btnSolo, btnMute, btnForce, btnEnable, btnDisable1h, btnSquelchApply, btnSquelchMarginApply, btnSquelchMarginClear, btnCtcssApply, btnCtcssClear, btnGainApply].forEach(b => {
       if (!b) return;
       b.disabled = true;
       b.classList.remove("on");
@@ -205,7 +208,7 @@ function updateSelectedButtons() {
   const c = cfgById.get(selectedId) || {};
   selMeta.textContent = `${c.label ?? selectedId}  •  ${freqMHz(c.freq_hz)} MHz  •  ${c.mode ?? ""}`;
 
-  [btnHold, btnSolo, btnMute, btnForce, btnEnable, btnDisable1h, btnSquelchApply, btnCtcssApply, btnCtcssClear, btnGainApply].forEach(b => {
+  [btnHold, btnSolo, btnMute, btnForce, btnEnable, btnDisable1h, btnSquelchApply, btnSquelchMarginApply, btnSquelchMarginClear, btnCtcssApply, btnCtcssClear, btnGainApply].forEach(b => {
     if (!b) return;
     b.disabled = false;
   });
@@ -217,6 +220,7 @@ function updateSelectedButtons() {
   btnEnable?.classList.toggle("on", !!c.enabled);
 
   if (squelchInput) squelchInput.value = c.squelchThreshold ?? "";
+  if (squelchMarginInput) squelchMarginInput.value = c.squelchNoiseMargin_dB ?? "";
   if (ctcssInput) ctcssInput.value = c.ctcssToneHz ?? "";
   if (gainInput) gainInput.value = c.audioGain_dB ?? "";
 }
@@ -255,6 +259,15 @@ btnSquelchApply?.addEventListener("click", () => {
   if (!selectedId || !squelchInput) return;
   const v = Number(squelchInput.value);
   if (Number.isFinite(v)) send({ type: "ChannelSetSquelch", data: { id: selectedId, squelchThreshold: v } });
+});
+btnSquelchMarginApply?.addEventListener("click", () => {
+  if (!selectedId || !squelchMarginInput) return;
+  const v = Number(squelchMarginInput.value);
+  if (Number.isFinite(v)) send({ type: "ChannelSetSquelchNoiseMargin", data: { id: selectedId, squelchNoiseMargin_dB: v } });
+});
+btnSquelchMarginClear?.addEventListener("click", () => {
+  if (!selectedId) return;
+  send({ type: "ChannelSetSquelchNoiseMargin", data: { id: selectedId, squelchNoiseMargin_dB: null } });
 });
 btnCtcssApply?.addEventListener("click", () => {
   if (!selectedId || !ctcssInput) return;

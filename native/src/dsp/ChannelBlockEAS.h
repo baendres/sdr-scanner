@@ -44,6 +44,7 @@ public:
                      int audioSampleRate,
                      int deviation_hz,
                      std::vector<double> alertTonesHz,
+                     std::optional<double> squelchNoiseMargin_dB,
                      std::function<void(ChannelStatusUpdate)> statusCallback);
 
     double getMinimumScanTime() const override { return 0.2; }
@@ -53,6 +54,7 @@ public:
     // Squelch` there) - here they sensibly control the internal FM demod's own squelch/gain,
     // since that's what actually gates/scales the audio a listener hears.
     void setSquelchValue(double squelchThreshold) override;
+    void setSquelchNoiseMargin(std::optional<double> marginDb) override;
     void setAudioGain(double audioGain_dB) override;
     ChannelStatus getStatus() override;
 

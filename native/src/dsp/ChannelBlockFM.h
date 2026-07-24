@@ -45,10 +45,12 @@ public:
                    int audioSampleRate,
                    int deviation_hz,
                    std::optional<double> ctcssToneHz,
+                   std::optional<double> squelchNoiseMargin_dB,
                    std::function<void(ChannelStatusUpdate)> statusCallback);
 
     void setForceActive(bool forceActive) override;
     void setSquelchValue(double squelchThreshold) override;
+    void setSquelchNoiseMargin(std::optional<double> marginDb) override;
     void setAudioGain(double audioGain_dB) override;
     void setCtcssTone(std::optional<double> toneHz) override;
     ChannelStatus getStatus() override;
@@ -61,10 +63,11 @@ private:
     // truncates its own output when it doesn't consider itself unmuted (see its header: "gate
     // or zero output if CTCSS tone not present"), which would silently mute all real audio
     // whenever CTCSS isn't configured (level=0 is not a reliable "always pass", see
-    // applyCtcssLevel()) if it were left inline. blockCtcssGate_ is the actual inline gate,
-    // driven explicitly from getStatus()'s already-computed ctcssOk so there's one source of
-    // truth for the gating decision.
+    // applyCtcssLevel()) if it were left inline. blockAudioGate_ is the actual inline gate,
+    // driven explicitly from getStatus()'s already-computed (CTCSS AND debounced power-squelch)
+    // decision so there's one source of truth for the gating decision.
     void applyCtcssLevel();
+    void onNoiseFloorUpdated() override;
 
     int deviation_hz_;
     int fmQuadRate_;
@@ -79,7 +82,10 @@ private:
     gr::blocks::null_sink::sptr blockCtcssSquelchSink_; // discards blockCtcssSquelch_'s output -
                                                           // GNU Radio requires every output port
                                                           // connected; we only want its unmuted()
-    gr::blocks::mute_ff::sptr blockCtcssGate_; // the real inline gate, driven from getStatus()
+    // Real inline gate for BOTH CTCSS and the debounced power-squelch decision - driven from
+    // getStatus() (see the class-level note above). Named generically rather than
+    // "blockCtcssGate_" since it now covers more than just CTCSS.
+    gr::blocks::mute_ff::sptr blockAudioGate_;
     gr::filter::fir_filter_fff::sptr blockAudioFilter_;
     gr::blocks::multiply_const_ff::sptr blockAudioGain_;
 

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS channels (
     dwell_time_s      REAL NOT NULL DEFAULT 3.0,
     squelch_threshold REAL NOT NULL DEFAULT -55,
     ctcss_tone_hz     REAL,                          -- NULL = disabled (power-squelch only)
+    squelch_noise_margin_db REAL,                    -- NULL = fixed squelch_threshold; set = adaptive (noise floor + margin)
     enabled           INTEGER NOT NULL DEFAULT 1,
     disable_until     REAL,
     mute              INTEGER NOT NULL DEFAULT 0,

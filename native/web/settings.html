@@ -30,6 +30,7 @@
               <th>Freq (MHz)</th>
               <th>Mode</th>
               <th>Squelch (dB)</th>
+              <th title="When set, overrides Squelch: the channel's threshold tracks its live noise floor plus this margin instead of a fixed value">Adaptive Margin (dB)</th>
               <th>CTCSS (Hz)</th>
               <th>Audio Gain (dB)</th>
               <th>Dwell (s)</th>
@@ -52,6 +53,7 @@
                 </select>
               </td>
               <td><input type="number" id="newChSquelch" step="1" value="-55" /></td>
+              <td><input type="number" id="newChSquelchMargin" step="1" placeholder="off" /></td>
               <td><input type="number" id="newChCtcss" step="0.1" placeholder="off" /></td>
               <td><input type="number" id="newChGain" step="1" value="0" /></td>
               <td><input type="number" id="newChDwell" step="0.5" value="3" /></td>

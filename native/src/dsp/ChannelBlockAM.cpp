@@ -20,9 +20,10 @@ ChannelBlockAM::ChannelBlockAM(const std::string& channelId,
                                 int64_t hardwareFreq_hz,
                                 int rfSampleRate,
                                 int audioSampleRate,
+                                std::optional<double> squelchNoiseMargin_dB,
                                 std::function<void(ChannelStatusUpdate)> statusCallback)
     : ChannelBlockBase(channelId, label, mute, solo, hold, squelchThreshold, audioGain_dB,
-                        dwellTime_s, audioSampleRate, std::move(statusCallback)),
+                        dwellTime_s, audioSampleRate, squelchNoiseMargin_dB, std::move(statusCallback)),
       rfSampleRate_(rfSampleRate) {
 
     audioGainFactor_ = dbToRatio(audioGain_dB) * kFixedAudioGainFactor;
@@ -46,10 +47,13 @@ ChannelBlockAM::ChannelBlockAM(const std::string& channelId,
         rfSampleRate_);
 
     blockPowerSquelch_ = gr::analog::pwr_squelch_cc::make(
-        squelchThreshold_, 1.0 / (audioSampleRate_ * SQUELCH_TC), 0, false);
+        effectiveSquelchThreshold(), 1.0 / (audioSampleRate_ * SQUELCH_TC), 0, false);
 
     blockAgc_ = gr::analog::feedforward_agc_cc::make(static_cast<int>(audioSampleRate_ * 0.2), 0.5f);
     blockAmDemod_ = gr::blocks::complex_to_mag::make(1);
+    // Real inline gate driven from getStatus()'s debounced squelch decision (see
+    // ChannelBlockFM's blockAudioGate_ for the same pattern/reasoning).
+    blockAudioGate_ = gr::blocks::mute_ff::make(false);
 
     ///
     // Audio filter + gain
@@ -74,7 +78,8 @@ ChannelBlockAM::ChannelBlockAM(const std::string& channelId,
     connect(blockFreqXlatingFilter_, 0, blockPowerSquelch_, 0);
     connect(blockPowerSquelch_, 0, blockAgc_, 0);
     connect(blockAgc_, 0, blockAmDemod_, 0);
-    connect(blockAmDemod_, 0, blockAudioFilter_, 0);
+    connect(blockAmDemod_, 0, blockAudioGate_, 0);
+    connect(blockAudioGate_, 0, blockAudioFilter_, 0);
     connect(blockAudioFilter_, 0, blockAudioGain_, 0);
     connect(blockAudioGain_, 0, blockAudioMute_, 0);
 
@@ -93,14 +98,30 @@ void ChannelBlockAM::setForceActive(bool forceActive) {
     if (forceActive) {
         blockPowerSquelch_->set_threshold(-150.0);
     } else {
-        blockPowerSquelch_->set_threshold(squelchThreshold_);
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
     }
 }
 
 void ChannelBlockAM::setSquelchValue(double squelchThreshold) {
     squelchThreshold_ = squelchThreshold;
+    // An explicit absolute value is a deliberate "use exactly this threshold" action - it wins
+    // over adaptive mode rather than being silently ignored by it.
+    squelchNoiseMargin_dB_.reset();
     if (!forceActive_) {
-        blockPowerSquelch_->set_threshold(squelchThreshold_);
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
+    }
+}
+
+void ChannelBlockAM::setSquelchNoiseMargin(std::optional<double> marginDb) {
+    squelchNoiseMargin_dB_ = marginDb;
+    if (!forceActive_) {
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
+    }
+}
+
+void ChannelBlockAM::onNoiseFloorUpdated() {
+    if (!forceActive_) {
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
     }
 }
 
@@ -110,7 +131,12 @@ void ChannelBlockAM::setAudioGain(double audioGain_dB) {
 }
 
 ChannelStatus ChannelBlockAM::getStatus() {
-    return computeAndReportStatus(blockPowerSquelch_->unmuted());
+    // forceActive is an explicit operator override, not a squelch reading, so it bypasses the
+    // debounce rather than waiting out its hang time before taking effect (see the matching
+    // note in ChannelBlockFM::getStatus()).
+    bool unmuted = forceActive_ ? true : debounceSquelch(blockPowerSquelch_->unmuted());
+    blockAudioGate_->set_mute(!unmuted);
+    return computeAndReportStatus(unmuted);
 }
 
 } // namespace sdrscan

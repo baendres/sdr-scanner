@@ -42,6 +42,12 @@
           <button id="btnSquelchApply">Set</button>
         </div>
         <div class="field-row">
+          <label for="squelchMarginInput" title="When set, overrides Squelch: threshold tracks the live noise floor plus this margin">Adaptive Margin (dB)</label>
+          <input id="squelchMarginInput" type="number" step="1" placeholder="off" />
+          <button id="btnSquelchMarginApply">Set</button>
+          <button id="btnSquelchMarginClear">Off</button>
+        </div>
+        <div class="field-row">
           <label for="ctcssInput">CTCSS (Hz)</label>
           <input id="ctcssInput" type="number" step="0.1" placeholder="off" />
           <button id="btnCtcssApply">Set</button>

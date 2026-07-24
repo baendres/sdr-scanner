@@ -55,7 +55,7 @@ ChannelStatus runTrial(int rfSampleRate, int audioSampleRate, int deviationHz,
         "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*squelchThreshold=*/-40.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
         /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
-        deviationHz, std::move(alertTonesHz), [](ChannelStatusUpdate) {});
+        deviationHz, std::move(alertTonesHz), /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
 
     tb->connect(adder, 0, modulator, 0);
     tb->connect(modulator, 0, head, 0);
@@ -100,7 +100,7 @@ TEST_CASE("ChannelBlockEAS forceActive opens regardless of tone") {
     auto channel = gnuradio::make_block_sptr<ChannelBlockEAS>(
         "test-channel", "Test", false, std::nullopt, false, -40.0, 0.0, 3.0, 0, 0,
         kNoaaRfSampleRate, kAudioSampleRate, kNoaaDeviationHz, std::vector<double>{1050.0},
-        [](ChannelStatusUpdate) {});
+        /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
     channel->setForceActive(true);
 
     tb->connect(tone, 0, modulator, 0);

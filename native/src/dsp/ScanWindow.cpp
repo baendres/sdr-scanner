@@ -28,26 +28,28 @@ std::shared_ptr<ChannelBlockBase> buildChannelBlock(const ChannelConfig& cc,
             block = gnuradio::make_block_sptr<ChannelBlockFM>(
                 cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
                 cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
-                deviation_hz, cc.ctcssToneHz, statusCallback);
+                deviation_hz, cc.ctcssToneHz, cc.squelchNoiseMargin_dB, statusCallback);
             break;
         }
         case ChannelMode::AM:
             block = gnuradio::make_block_sptr<ChannelBlockAM>(
                 cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
                 cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
-                statusCallback);
+                cc.squelchNoiseMargin_dB, statusCallback);
             break;
         case ChannelMode::NOAA:
             block = gnuradio::make_block_sptr<ChannelBlockEAS>(
                 cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
                 cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
-                /*deviation_hz=*/5000, /*alertTonesHz=*/std::vector<double>{1050.0}, statusCallback);
+                /*deviation_hz=*/5000, /*alertTonesHz=*/std::vector<double>{1050.0},
+                cc.squelchNoiseMargin_dB, statusCallback);
             break;
         case ChannelMode::BFM_EAS:
             block = gnuradio::make_block_sptr<ChannelBlockEAS>(
                 cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
                 cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
-                /*deviation_hz=*/75000, /*alertTonesHz=*/std::vector<double>{853.0, 960.0}, statusCallback);
+                /*deviation_hz=*/75000, /*alertTonesHz=*/std::vector<double>{853.0, 960.0},
+                cc.squelchNoiseMargin_dB, statusCallback);
             break;
         default:
             throw std::runtime_error("buildChannelBlock: unhandled ChannelMode");
