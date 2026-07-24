@@ -9,6 +9,8 @@ services:
     privileged: true
     volumes:
       - ./data:/data
+      - ./volk:/root/.volk   # persists `docker exec <container> volk_profile`'s tuned kernel
+                              # selection across rebuilds - see native/README.md
       - /dev/bus/usb:/dev/bus/usb
     # on-failure (not unless-stopped/always): restarts when the process exits non-zero - which
     # covers both a genuine crash and the settings page's "Restart Now" button (see main.cpp's

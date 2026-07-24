@@ -8,6 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake pkg-config \
     gnuradio-dev \
+    libvolk-bin \
     libboost-dev libboost-system-dev \
     libsqlite3-dev \
     nlohmann-json3-dev \

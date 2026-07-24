@@ -62,6 +62,30 @@ Notes:
   the image/container names) from the directory name, so a rename looks like a brand-new
   project and triggers a full rebuild.
 
+### VOLK kernel tuning (CPU usage)
+
+GNU Radio's DSP blocks (FIR filters, magnitude/RSSI calc, FM demod, etc.) go through VOLK,
+which picks a SIMD kernel (AVX2/AVX/SSE/...) per function based on a one-time benchmark against
+the actual CPU - `volk_profile`. Without it, VOLK falls back to generic (non-SIMD)
+implementations, which measured 3-5x slower on this app's hot-path functions (FM demod, RSSI
+magnitude, sample deinterleaving) on real hardware - a meaningful chunk of `sdrscan`'s CPU
+usage if it's never been run.
+
+VOLK reads its config from `$HOME/.volk/volk_config` at process startup. The container runs as
+root with no `USER` directive (so `$HOME=/root`), which is *not* the same `$HOME` as whatever
+user profiles from the host shell - profiling on the host has no effect on the containerized
+process. `./volk:/root/.volk` (in `docker-compose.yaml`) persists the container's own profile
+across rebuilds; to (re-)generate it:
+
+```
+docker compose up -d                          # make sure the mount above exists
+docker exec -it <container-name> volk_profile # takes a few minutes; writes into the mount
+docker compose restart                        # sdrscan only reads volk_config at startup
+```
+
+Re-run this after any change to the deployment host's CPU (a migration to different hardware,
+mainly) - a profile tuned for one CPU doesn't necessarily transfer to another.
+
 ### Local (fast dev loop)
 
 For iterating on the code itself. Ubuntu/Debian's `gnuradio-dev` package (3.10.x) has
