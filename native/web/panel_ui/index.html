@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>sdr-scanner</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="title">sdr-scanner</div>
+    <div class="status" id="connStatus">disconnected</div>
+  </header>
+
+  <main>
+    <section class="left">
+      <h2>Active Channels</h2>
+      <div id="activeList" class="active-list"></div>
+    </section>
+
+    <!-- Keep right section for selected channel controls (dock) -->
+    <section class="right">
+      <div class="card dock">
+        <div class="dock-top">
+          <div class="dock-title">Selected</div>
+          <div id="selectedMeta" class="selected-meta">None</div>
+        </div>
+
+        <div class="btn-grid">
+          <button id="btnHold" class="btn">Hold</button>
+          <button id="btnSolo" class="btn">Solo</button>
+          <button id="btnMute" class="btn">Mute</button>
+          <button id="btnForce" class="btn danger">Force</button>
+
+          <button id="btnEnable" class="btn">Enable</button>
+          <button id="btnDisable1h" class="btn">Disable 1h</button>
+        </div>
+      </div>
+
+      <!-- Desktop-only cards (CSS hides on the small screen) -->
+      <div class="card desktop-only">
+        <h2>Config</h2>
+        <div class="table-wrap">
+          <table id="cfgTable">
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Freq (MHz)</th>
+                <th>Mode</th>
+                <th>Squelch</th>
+                <th>CTCSS</th>
+                <th>Enabled</th>
+                <th>Hold</th>
+                <th>Mute</th>
+                <th>Solo</th>
+                <th>Force</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card desktop-only">
+        <h2>Debug</h2>
+        <pre id="log"></pre>
+      </div>
+    </section>
+  </main>
+
+<script defer src="/app.js"></script>
+</body>
+</html>

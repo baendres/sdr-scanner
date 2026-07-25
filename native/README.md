@@ -127,7 +127,11 @@ the right flags - see "Docker (recommended)"):
 ./build/sdrscan -d sdrscan.db -w web --host 0.0.0.0 --port 8080
 ```
 
-Then open `http://<host>:8080/`.
+Then open `http://<host>:8080/`. A reduced, touch-friendly control page for a small screen
+(active channels + Hold/Solo/Mute/Force/Enable/Disable, no squelch/CTCSS/gain inputs) is at
+`http://<host>:8080/panel_ui/index.html` - same `app.js`/`style.css` as the main page, just a
+smaller DOM; its "Config"/"Debug" cards are hidden below 980px width via the `.desktop-only`
+CSS class.
 
 ## Architecture
 
