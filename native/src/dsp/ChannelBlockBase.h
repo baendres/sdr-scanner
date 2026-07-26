@@ -100,12 +100,6 @@ protected:
     // than through this - it's provided for subclasses that want the resolved value in one call.
     double effectiveSquelchThreshold() const;
 
-    // Called from updateRSSI() whenever the noise floor estimate changes and adaptive squelch
-    // is active, so a subclass can push a fresh threshold to its concrete squelch block. No-op
-    // by default (ChannelBlockEAS doesn't have its own squelch block - it delegates entirely to
-    // its internal ChannelBlockFM, which gets this call directly).
-    virtual void onNoiseFloorUpdated() {}
-
     // Time-based debounce: filters brief noise spikes from being treated as a genuine
     // open/close by requiring the raw squelch-open decision to persist for
     // SQUELCH_DEBOUNCE_SECONDS before the reported/gated state follows it. Call once per

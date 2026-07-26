@@ -190,12 +190,6 @@ void ChannelBlockFM::setSquelchNoiseMargin(std::optional<double> marginDb) {
     }
 }
 
-void ChannelBlockFM::onNoiseFloorUpdated() {
-    if (!forceActive_) {
-        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
-    }
-}
-
 void ChannelBlockFM::setAudioGain(double audioGain_dB) {
     audioGainFactor_ = dbToRatio(audioGain_dB);
     blockAudioGain_->set_k(static_cast<float>(audioGainFactor_));
@@ -207,7 +201,19 @@ void ChannelBlockFM::setCtcssTone(std::optional<double> toneHz) {
     applyCtcssLevel();
 }
 
+void ChannelBlockFM::refreshAdaptiveSquelchThreshold() {
+    // Deliberately not called from updateRSSI() (which runs on the flowgraph's own worker
+    // thread) - every other hot-update setter in this codebase is only ever called from
+    // Scanner's separate control-plane thread. getStatus() and ChannelBlockEAS (for its internal
+    // ChannelBlockFM) both call this from that safe thread instead.
+    if (squelchNoiseMargin_dB_.has_value() && !forceActive_) {
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
+    }
+}
+
 ChannelStatus ChannelBlockFM::getStatus() {
+    refreshAdaptiveSquelchThreshold();
+
     // CTCSS only gates when actually configured (and never overrides forceActive) - see the
     // note in applyCtcssLevel() for why we don't rely on level==0 to mean "always passes".
     bool ctcssOk = forceActive_ || !ctcssToneHz_.has_value() || blockCtcssSquelch_->unmuted();

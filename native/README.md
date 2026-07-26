@@ -236,7 +236,19 @@ than a single fixed threshold tolerates well:
   the margin and vice versa in spirit (the margin isn't cleared by a squelch write, but
   `effectiveSquelchThreshold()` treats them as alternate modes, not additive) - only one is ever
   actually in effect at a time. `ChannelBlockEAS` doesn't have a squelch block of its own; it
-  just forwards the margin to its internal `ChannelBlockFM`.
+  just forwards the margin to its internal `ChannelBlockFM`. The resolved threshold is only ever
+  pushed to the real squelch block (`set_threshold()`) from `getStatus()`/
+  `refreshAdaptiveSquelchThreshold()` - i.e. from Scanner's control-plane thread, the same one
+  every other hot-update setter in this codebase already runs on - never from `updateRSSI()`
+  itself, which runs on the flowgraph's own worker thread. An earlier version pushed it straight
+  from `updateRSSI()`, calling one live block's setter from inside a different block's `work()`
+  call on the flowgraph thread - a threading pattern found nowhere else in this codebase, and one
+  that hung the flowgraph's scheduler on real hardware (observed as `AudioMixer: receiver N
+  starved for ... samples (~100% silence-filled)` and the liveness watchdog eventually firing) as
+  soon as a channel had an adaptive margin configured. `ChannelBlockEAS` calls
+  `refreshAdaptiveSquelchThreshold()` explicitly on its internal `ChannelBlockFM` for this reason
+  too - it never calls that block's own `getStatus()` (see the class comment), so without this
+  explicit nudge a NOAA/BFM_EAS channel's adaptive threshold would never update at all.
 - **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
   squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
   treated as a genuine transition, filtering brief noise spikes that would otherwise pop the

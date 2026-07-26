@@ -45,8 +45,6 @@ public:
     ChannelStatus getStatus() override;
 
 private:
-    void onNoiseFloorUpdated() override;
-
     int rfSampleRate_;
 
     gr::filter::freq_xlating_fir_filter_ccf::sptr blockFreqXlatingFilter_;

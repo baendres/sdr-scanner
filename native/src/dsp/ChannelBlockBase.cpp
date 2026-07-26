@@ -54,7 +54,11 @@ void ChannelBlockBase::updateRSSI(float dBFS) {
         } else {
             noiseFloor_dBFS_ = (NOISEFLOOR_LOWPASS_A * dBFS) + ((1 - NOISEFLOOR_LOWPASS_A) * (*noiseFloor_dBFS_));
         }
-        if (squelchNoiseMargin_dB_.has_value()) onNoiseFloorUpdated();
+        // Deliberately doesn't push the new threshold to blockPowerSquelch_ here - this runs on
+        // the flowgraph's own worker thread (called from Mag2ToPowerBlock's work()), and every
+        // other hot-update setter in this codebase is only ever called from Scanner's separate
+        // control-plane thread. getStatus() (already on that safe thread, polled every ~100ms)
+        // applies the updated threshold instead - see ChannelBlockFM/AM::getStatus().
     }
 }
 

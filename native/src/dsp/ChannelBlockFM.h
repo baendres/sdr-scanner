@@ -55,6 +55,14 @@ public:
     void setCtcssTone(std::optional<double> toneHz) override;
     ChannelStatus getStatus() override;
 
+    // Pushes the current adaptive-squelch threshold (if configured) to blockPowerSquelch_,
+    // without touching CTCSS/debounce/the audio gate or reporting status - just the threshold
+    // update, safe to call from Scanner's control-plane thread. getStatus() already does this as
+    // part of its own work; ChannelBlockEAS calls this directly instead, since it never calls
+    // its internal ChannelBlockFM's getStatus() (EAS has its own trigger-latch status model -
+    // see the class comment on ChannelBlockEAS) but still needs the threshold to stay current.
+    void refreshAdaptiveSquelchThreshold();
+
 private:
     // The CTCSS block is always present in the chain (simpler + avoids ever needing to stop
     // the flowgraph to add/remove a block). It's wired as a side tap (fed the same signal, but
@@ -67,7 +75,6 @@ private:
     // driven explicitly from getStatus()'s already-computed (CTCSS AND debounced power-squelch)
     // decision so there's one source of truth for the gating decision.
     void applyCtcssLevel();
-    void onNoiseFloorUpdated() override;
 
     int deviation_hz_;
     int fmQuadRate_;

@@ -160,30 +160,47 @@ TEST_CASE("Adaptive squelch opens based on the live noise floor plus margin, not
     constexpr int rfSampleRate = 240'000;
     constexpr int audioSampleRate = 16'000;
 
-    // Phase 1: a weak tone standing in for the band's quiet noise floor (~-60 dBFS). Long enough
-    // to seed noiseFloor_dBFS_ from at least one RSSI update (needs >= 4000 fmQuadRate_ samples,
-    // i.e. >= 0.25s of RF time here - see ChannelBlockBase::updateRSSI/RSSI_UPDATE_FREQ_HZ).
-    auto quiet = makeToneSegment(1000.0, 0.001f, 0.4, rfSampleRate);
-    // Phase 2: a moderate signal (~-34 dBFS) - clearly 26dB above the phase-1 noise floor (and
-    // therefore above noiseFloor+margin), but nowhere near the deliberately absurd fixed
-    // squelchThreshold below, so only adaptive mode can open the squelch here.
-    auto signal = makeToneSegment(1000.0, 0.02f, 0.3, rfSampleRate);
-    std::vector<gr_complex> samples = quiet;
-    samples.insert(samples.end(), signal.begin(), signal.end());
-
-    auto tb = gr::make_top_block("test-adaptive-squelch");
-    auto source = gr::blocks::vector_source_c::make(samples, false);
-    auto sink = gr::blocks::null_sink::make(sizeof(float));
-
+    // Adaptive squelch's threshold is only pushed to the real GNU Radio squelch block from
+    // getStatus() (called from Scanner's polling thread, not the flowgraph's own worker thread -
+    // see the note on ChannelBlockFM::refreshAdaptiveSquelchThreshold()). So unlike a plain fixed
+    // threshold, the block never re-evaluates once a run() completes with stale data already
+    // flowing through it - this test has to run phase 1 (learn the noise floor) to completion,
+    // explicitly call getStatus() once to push the resulting threshold (exactly what Scanner's
+    // ~100ms poll would do in production before the signal changes), and only then run phase 2
+    // through the now-correctly-thresholded block, rather than batching both phases through a
+    // single run() and hoping getStatus() catches it mid-flight.
     auto channel = gnuradio::make_block_sptr<ChannelBlockFM>(
         "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*squelchThreshold_dB=*/100.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
         /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
         /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/6.0, [](ChannelStatusUpdate) {});
 
-    tb->connect(source, 0, channel, 0);
-    tb->connect(channel, 0, sink, 0);
-    tb->run();
+    // Phase 1: a weak tone standing in for the band's quiet noise floor (~-60 dBFS). Long enough
+    // to seed noiseFloor_dBFS_ from at least one RSSI update (needs >= 4000 fmQuadRate_ samples,
+    // i.e. >= 0.25s of RF time here - see ChannelBlockBase::updateRSSI/RSSI_UPDATE_FREQ_HZ).
+    {
+        auto quiet = makeToneSegment(1000.0, 0.001f, 0.4, rfSampleRate);
+        auto tb1 = gr::make_top_block("test-adaptive-squelch-phase1");
+        auto source1 = gr::blocks::vector_source_c::make(quiet, false);
+        auto sink1 = gr::blocks::null_sink::make(sizeof(float));
+        tb1->connect(source1, 0, channel, 0);
+        tb1->connect(channel, 0, sink1, 0);
+        tb1->run();
+        tb1->disconnect_all();
+    }
+
+    channel->getStatus(); // pushes noiseFloor + margin to blockPowerSquelch_ before phase 2 runs
+
+    // Phase 2: a moderate signal (~-34 dBFS) - clearly 26dB above the phase-1 noise floor (and
+    // therefore above noiseFloor+margin), but nowhere near the deliberately absurd fixed
+    // squelchThreshold above, so only adaptive mode can open the squelch here.
+    auto signal = makeToneSegment(1000.0, 0.02f, 0.3, rfSampleRate);
+    auto tb2 = gr::make_top_block("test-adaptive-squelch-phase2");
+    auto source2 = gr::blocks::vector_source_c::make(signal, false);
+    auto sink2 = gr::blocks::null_sink::make(sizeof(float));
+    tb2->connect(source2, 0, channel, 0);
+    tb2->connect(channel, 0, sink2, 0);
+    tb2->run();
 
     CHECK(settledStatus(channel) == ChannelStatus::ACTIVE);
 }

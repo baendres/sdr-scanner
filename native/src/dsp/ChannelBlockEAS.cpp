@@ -105,6 +105,11 @@ void ChannelBlockEAS::setAudioGain(double audioGain_dB) {
 }
 
 ChannelStatus ChannelBlockEAS::getStatus() {
+    // blockFm_'s own getStatus() is never called (see the class comment - EAS has its own
+    // trigger-latch status model, and blockFm_'s status/gating are otherwise unused), so its
+    // adaptive-squelch threshold needs this explicit nudge to stay current instead.
+    blockFm_->refreshAdaptiveSquelchThreshold();
+
     ChannelStatus status = hold_ ? ChannelStatus::HOLD : ChannelStatus::IDLE;
 
     if (active_ || forceActive_) {

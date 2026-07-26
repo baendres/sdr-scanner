@@ -119,18 +119,18 @@ void ChannelBlockAM::setSquelchNoiseMargin(std::optional<double> marginDb) {
     }
 }
 
-void ChannelBlockAM::onNoiseFloorUpdated() {
-    if (!forceActive_) {
-        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
-    }
-}
-
 void ChannelBlockAM::setAudioGain(double audioGain_dB) {
     audioGainFactor_ = dbToRatio(audioGain_dB) * kFixedAudioGainFactor;
     blockAudioGain_->set_k(static_cast<float>(audioGainFactor_));
 }
 
 ChannelStatus ChannelBlockAM::getStatus() {
+    // Adaptive squelch's threshold is applied here rather than from updateRSSI() (which runs on
+    // the flowgraph's own worker thread) - see the matching note in ChannelBlockFM::getStatus().
+    if (squelchNoiseMargin_dB_.has_value() && !forceActive_) {
+        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
+    }
+
     // forceActive is an explicit operator override, not a squelch reading, so it bypasses the
     // debounce rather than waiting out its hang time before taking effect (see the matching
     // note in ChannelBlockFM::getStatus()).
