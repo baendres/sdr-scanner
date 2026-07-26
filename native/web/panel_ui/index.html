@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
   <title>sdr-scanner</title>
   <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/panel_ui/panel.css" />
 </head>
 <body>
   <header>
@@ -13,61 +14,80 @@
   </header>
 
   <main>
-    <section class="left">
-      <h2>Active Channels</h2>
+    <!-- Live "what's happening right now" view for normal scanning - only channels seen
+         active recently (see app.js's renderActiveList()). The Channels flyout below is the
+         separate "reach any configured channel, active or not" path, for setup/configuration
+         rather than monitoring. -->
+    <section class="panel-list">
       <div id="activeList" class="active-list"></div>
     </section>
 
-    <!-- Keep right section for selected channel controls (dock) -->
-    <section class="right">
-      <div class="card dock">
-        <div class="dock-top">
-          <div class="dock-title">Selected</div>
-          <div id="selectedMeta" class="selected-meta">None</div>
-        </div>
-
-        <div class="btn-grid">
-          <button id="btnHold" class="btn">Hold</button>
-          <button id="btnSolo" class="btn">Solo</button>
-          <button id="btnMute" class="btn">Mute</button>
-          <button id="btnForce" class="btn danger">Force</button>
-
-          <button id="btnEnable" class="btn">Enable</button>
-          <button id="btnDisable1h" class="btn">Disable 1h</button>
-        </div>
+    <section class="panel-dock">
+      <div class="dock-top">
+        <div id="selectedMeta" class="selected-meta">None</div>
+        <button id="btnChannelsFlyout" class="btn">Channels</button>
+        <button id="btnConfigFlyout" class="btn">Config</button>
       </div>
 
-      <!-- Desktop-only cards (CSS hides on the small screen) -->
-      <div class="card desktop-only">
-        <h2>Config</h2>
-        <div class="table-wrap">
-          <table id="cfgTable">
-            <thead>
-              <tr>
-                <th>Label</th>
-                <th>Freq (MHz)</th>
-                <th>Mode</th>
-                <th>Squelch</th>
-                <th>CTCSS</th>
-                <th>Enabled</th>
-                <th>Hold</th>
-                <th>Mute</th>
-                <th>Solo</th>
-                <th>Force</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card desktop-only">
-        <h2>Debug</h2>
-        <pre id="log"></pre>
+      <div class="btn-grid">
+        <button id="btnHold" class="btn">Hold</button>
+        <button id="btnSolo" class="btn">Solo</button>
+        <button id="btnMute" class="btn">Mute</button>
+        <button id="btnForce" class="btn danger">Force</button>
+        <button id="btnEnable" class="btn">Enable</button>
+        <button id="btnDisable1h" class="btn">Disable 1h</button>
       </div>
     </section>
   </main>
 
+  <div id="flyoutBackdrop" class="flyout-backdrop"></div>
+
+  <!-- Every configured channel, not just ones seen active recently (unlike the old sidebar) -
+       tap one to select it, same as clicking a strip on the main page. Slides in from the left
+       so it's visually distinct from the Config flyout - pick a channel here first, then use
+       the dock's Config button for that channel's squelch/CTCSS/gain. -->
+  <aside id="channelsFlyout" class="flyout left">
+    <div class="flyout-header">
+      <span>Channels</span>
+      <button id="btnCloseChannelsFlyout" class="btn">Close</button>
+    </div>
+    <div id="channelsFlyoutList" class="active-list"></div>
+  </aside>
+
+  <!-- Squelch/CTCSS/adaptive-margin/gain for whichever channel is currently selected - same
+       field IDs app.js already wires on the main page, just relocated here (see panel.css) so
+       they don't compete with the action buttons for space on a 480x320 screen. -->
+  <aside id="configFlyout" class="flyout">
+    <div class="flyout-header">
+      <span>Channel Config</span>
+      <button id="btnCloseFlyout" class="btn">Close</button>
+    </div>
+
+    <div class="field-row">
+      <label for="squelchInput">Squelch (dB)</label>
+      <input id="squelchInput" type="number" step="1" />
+      <button id="btnSquelchApply">Set</button>
+    </div>
+    <div class="field-row">
+      <label for="squelchMarginInput">Adaptive Margin (dB)</label>
+      <input id="squelchMarginInput" type="number" step="1" placeholder="off" />
+      <button id="btnSquelchMarginApply">Set</button>
+      <button id="btnSquelchMarginClear">Off</button>
+    </div>
+    <div class="field-row">
+      <label for="ctcssInput">CTCSS (Hz)</label>
+      <input id="ctcssInput" type="number" step="0.1" placeholder="off" />
+      <button id="btnCtcssApply">Set</button>
+      <button id="btnCtcssClear">Off</button>
+    </div>
+    <div class="field-row">
+      <label for="gainInput">Audio Gain (dB)</label>
+      <input id="gainInput" type="number" step="1" />
+      <button id="btnGainApply">Set</button>
+    </div>
+  </aside>
+
 <script defer src="/app.js"></script>
+<script defer src="/panel_ui/panel.js"></script>
 </body>
 </html>

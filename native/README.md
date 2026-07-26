@@ -127,11 +127,24 @@ the right flags - see "Docker (recommended)"):
 ./build/sdrscan -d sdrscan.db -w web --host 0.0.0.0 --port 8080
 ```
 
-Then open `http://<host>:8080/`. A reduced, touch-friendly control page for a small screen
-(active channels + Hold/Solo/Mute/Force/Enable/Disable, no squelch/CTCSS/gain inputs) is at
-`http://<host>:8080/panel_ui/index.html` - same `app.js`/`style.css` as the main page, just a
-smaller DOM; its "Config"/"Debug" cards are hidden below 980px width via the `.desktop-only`
-CSS class.
+Then open `http://<host>:8080/`. A kiosk-style control page for a small touchscreen (built and
+verified against a 480x320 landscape panel, e.g. a 3.5" RPi HDMI touchscreen) is at
+`http://<host>:8080/panel_ui/index.html` - reuses `app.js` unmodified (its DOM IDs match what
+`app.js` already expects, including the squelch/CTCSS/gain fields, which are just relocated -
+see below), with its own `panel.css`/`panel.js` for the layout:
+- A compact **live active-channels list** (only channels seen active recently, same data
+  app.js's `renderActiveList()` always drove) for normal at-a-glance scanning, next to a 2x3
+  grid of Hold/Solo/Mute/Force/Enable/Disable buttons for whichever channel is selected.
+- Two slide-in flyouts (`panel.js`), reached via buttons on the dock, for the case the live
+  list can't cover - reaching a specific channel to configure it:
+  - **Channels** - every configured channel, active or not (a disabled or
+    simply-never-triggered one still needs to be reachable), tap one to select it and return
+    to the dock.
+  - **Config** - squelch/CTCSS/adaptive-margin/gain for the now-selected channel; tuned rarely
+    enough that it doesn't need to compete with the action buttons for space.
+
+No server-side route registration needed - `HttpServer`'s static handler serves any path under
+`web/` generically, so a new page here is just a new file.
 
 ## Architecture
 

@@ -1,0 +1,82 @@
+/* Layout for a genuinely small kiosk touchscreen (built/tested against a 480x320 landscape
+   panel - a CUQI/RPi-style 3.5" HDMI touchscreen). style.css supplies shared primitives (.btn,
+   .badge, .strip, .field-row, ...); everything here is page-scoped layout on top of that, kept
+   in a separate file so it can't leak into the main/settings pages that also load style.css. */
+
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { display: flex; flex-direction: column; }
+
+header { flex-shrink: 0; padding: 4px 8px; min-height: 0; }
+header .title { font-size: 13px; }
+header .status { font-size: 10px; padding: 2px 6px; }
+
+/* app.js injects #audioControls into <header> with inline flex styles - only non-essential
+   bits (the "Audio:"/"Vol" text labels, both plain unlabeled <div>s) are hidden here to make
+   room; the actual controls (#audioToggle, #audioVolume, #audioStatus) stay. */
+#audioControls { gap: 4px !important; font-size: 10px; }
+#audioControls > div:not([id]) { display: none; }
+#audioControls .btn { padding: 3px 6px; font-size: 11px; }
+#audioVolume { width: 44px; height: 12px; }
+#audioStatus { max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+main { flex: 1; display: flex; min-height: 0; padding: 0; }
+
+/* Live "what's happening now" view (see the note on #activeList in index.html) - only channels
+   seen active recently, same list app.js's renderActiveList() always drove. */
+.panel-list {
+  width: 150px; flex-shrink: 0; overflow-y: auto; padding: 4px;
+  border-right: 1px solid #e5e7eb;
+}
+/* RSSI/noise-floor/volume numbers - real estate they'd need isn't worth it at this size. */
+.panel-list .meters { display: none; }
+
+.panel-dock { flex: 1; display: flex; flex-direction: column; padding: 6px 8px; min-width: 0; }
+.dock-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 6px; }
+.dock-top .selected-meta { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-top .btn { flex-shrink: 0; padding: 4px 8px; font-size: 11px; }
+
+.btn-grid {
+  flex: 1; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr);
+  gap: 6px;
+}
+.btn-grid .btn { font-size: 13px; }
+
+/* Config flyout: squelch/CTCSS/adaptive-margin/gain - tuned rarely enough that they don't need
+   to compete with the always-visible action buttons for space (see native/README.md). Slides
+   in from the right over a dimmed backdrop; opened/closed by panel.js. */
+.flyout-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+  opacity: 0; pointer-events: none; transition: opacity 0.15s; z-index: 40;
+}
+.flyout-backdrop.open { opacity: 1; pointer-events: auto; }
+
+.flyout {
+  position: fixed; top: 0; right: -260px; width: 240px; height: 100%;
+  background: #fff; box-shadow: -2px 0 8px rgba(0,0,0,0.25);
+  padding: 6px 8px; overflow-y: auto; transition: right 0.18s; z-index: 50;
+  box-sizing: border-box;
+}
+.flyout.open { right: 0; }
+/* Channels flyout slides in from the left instead - visually distinct from Config, and the two
+   can't be open at once anyway (the backdrop blocks the dock's buttons underneath). */
+.flyout.left { left: -260px; right: auto; transition: left 0.18s; }
+.flyout.left.open { left: 0; right: auto; }
+
+.flyout-header {
+  display: flex; justify-content: space-between; align-items: center;
+  font-weight: 700; font-size: 13px; margin-bottom: 4px;
+}
+.flyout .field-row { flex-wrap: wrap; margin-top: 4px; }
+.flyout .field-row label { width: auto; flex-basis: 100%; font-size: 11px; margin-bottom: 1px; }
+.flyout .field-row input { font-size: 12px; padding: 3px 6px; }
+.flyout .field-row button { font-size: 11px; padding: 3px 8px; }
+
+.flyout .active-list { margin-top: 4px; }
+
+/* Compact strip styling shared by both channel lists - the always-visible active-only sidebar
+   and the Channels flyout's full list. */
+.panel-list .active-list, .flyout .active-list { gap: 4px; }
+.panel-list .strip, .flyout .strip { padding: 6px; border-radius: 8px; }
+.panel-list .strip .label, .flyout .strip .label { font-size: 12px; }
+.panel-list .strip .freq, .flyout .strip .freq { font-size: 10px; }
+.panel-list .strip .badge, .flyout .strip .badge { font-size: 9px; padding: 1px 4px; }
