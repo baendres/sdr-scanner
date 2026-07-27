@@ -314,14 +314,29 @@ depth means the new window's squelch/demod briefly process old-frequency samples
 `sdr-scanner`'s README calls this out by name ("Tuning-Pause Settings") as a cause of "invalid
 squelch breaks", audible as spurious noise/false triggers right after a hop.
 
-Upstream's calibrated default pairs `buffers=8` with a 20ms pause. This receiver type uses
+This settle delay is a real, measurable cost: the receiver's *entire* flowgraph - not just the
+window being hopped away from - produces zero audio samples for its whole duration, since the
+RF selector is already pointed at the discard port and the audio selector hasn't been
+re-pointed at the new window yet (see `startWindow()`). A scanner that spends much of its time
+round-robin-hopping through idle windows (the normal case when there's more configured
+channels than fit in one window and nothing's currently transmitting) pays this cost on nearly
+every hop, which showed up on real hardware as `AudioMixer`'s "falling behind real time"
+warning, chronically - not from CPU load, from this dead time.
+
+Upstream's calibrated default pairs `buffers=8` with a 20ms pause. This receiver type requests
 `buffers=32` instead (4x deeper - see the `streamArgs` comment in `SoapyReceiver.cpp` for why:
-it's there to survive USB completion latency on a virtualized passthrough, e.g. WSL2's
-usbipd), which needs a correspondingly longer settle time - `kRtlSdrTuneSettleMs` (80ms,
-scaled roughly with the buffer depth) exists for exactly that reason. If a specific device
-still shows hop-boundary noise/clicks, that value is the first thing to try raising; it isn't
-yet exposed as a per-receiver config knob the way upstream's `tunePause` is, since no hardware
-has needed that granularity yet.
+the theory was surviving USB completion latency on a virtualized passthrough, e.g. WSL2's
+usbipd) - but real-hardware logs showed that override was never actually taking effect:
+SoapyRTLSDR always logs its own default ("Allocating 15 zero-copy buffers"), regardless of the
+streamArgs value passed. `kRtlSdrTuneSettleMs` had been scaled to match the requested (but
+never real) 32-buffer depth - 80ms, 4x upstream's 20ms - so every hop was paying for queue
+depth that didn't exist. Rescaled to the actual 15-buffer depth instead (roughly `15/8 * 20ms`,
+~40ms) - since the real fix for excess hop-driven dead time is shrinking that cost accurately,
+not stretching scan dwell time to dilute it (which would trade away scan responsiveness to
+compensate for a miscalibrated constant). If `buffers=32` needs to genuinely take effect (or
+"invalid squelch breaks" reappear), revisit both together - `kRtlSdrTuneSettleMs` assumes the
+15-buffer default is what's actually in use. Not yet exposed as a per-receiver config knob the
+way upstream's `tunePause` is, since no hardware has needed that granularity yet.
 
 ### Simplifications vs. the Python version (documented in code comments too)
 

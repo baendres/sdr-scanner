@@ -23,13 +23,23 @@ const std::vector<int> kRtlSdrSampleRates = {1'024'000, 1'536'000, 1'792'000, 1'
 // window's squelch/demod start trusting what comes out - too short a pause relative to the
 // buffer depth means the new window briefly processes old-frequency samples, which the README
 // calls out by name as a cause of "invalid squelch breaks" (audible as spurious noise/false
-// triggers right after a hop). This receiver type's own streamArgs (below) uses buffers=32 -
-// 4x Python's calibrated default, added to survive a different problem (see that comment) -
-// so it needs a correspondingly longer settle time or it inherits exactly that stale-sample
-// problem. Scaled roughly proportionally to the buffer depth increase; if a specific device
-// still needs more, this may need to become a per-receiver config knob (Python's tunePause
-// already is one).
-constexpr int kRtlSdrTuneSettleMs = 80;
+// triggers right after a hop). This is a real per-hop cost: the receiver's entire flowgraph
+// produces zero audio samples (for any window, not just the one hopped away from) for the
+// full settle duration, since the RF selector is already routed to the discard port and the
+// audio selector hasn't been pointed at the new window yet (see startWindow()) - on real
+// hardware this showed up as AudioMixer's "falling behind real time" warning, chronically,
+// whenever the scanner spent much of its time round-robin-hopping through idle windows.
+// This receiver type's streamArgs (below) requests buffers=32 - 4x Python's calibrated
+// buffers=8/tunePause=20ms pair - on the theory that a deeper queue survives more completion
+// latency (see that comment). Real-hardware logs showed this was never actually taking
+// effect: SoapyRTLSDR always logs its own default "Allocating 15 zero-copy buffers"
+// regardless of the streamArgs override, so the settle time had been sized for a 32-buffer
+// depth that was never real. Scaled to the actual depth instead (15/8 * 20ms rounded up) -
+// shrinks the per-hop dead time instead of masking it with a longer scan dwell, which would
+// trade away scan responsiveness to fix a cost that was miscalibrated in the first place. If
+// buffers=32 needs to genuinely take effect (or "invalid squelch breaks" reappear), revisit
+// both together - this value assumes the 15-buffer default is what's actually in use.
+constexpr int kRtlSdrTuneSettleMs = 40;
 } // namespace
 
 SoapyReceiver::SoapyReceiver(ReceiverConfig config,
