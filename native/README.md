@@ -328,6 +328,22 @@ than a single fixed threshold tolerates well:
   from whichever stage actually produced the final channelized signal, so this is purely a
   compute-cost change, not a filtering/selectivity change - same audio and squelch behavior,
   far less CPU per sample.
+
+  Real production logs confirmed the tap-count reduction (3723-5417 taps down to roughly
+  280-480 combined across both stages), but the starvation percentage on real hardware still
+  didn't move - the same specific values recurred across this fix and all four before it. With
+  every receiver-side overhead and compute hypothesis directly measured and ruled out (and every
+  `AudioOutput` implementation checked and confirmed non-blocking - `send()` on all four just
+  copies into a mutex-guarded buffer, with actual I/O on a separate thread or callback), the
+  remaining candidate was `AudioMixer`'s own pacing assumption rather than anything upstream:
+  `kTargetLatencySeconds` (see `AudioMixer::run()`) is the only margin given to GNU Radio's
+  inherently bursty block scheduling before a gap counts as "starved," and 100ms may simply not
+  be enough room for this pipeline's actual burst interval - which would produce exactly this
+  symptom (a persistent, roughly fixed-magnitude deficit unaffected by throughput
+  improvements, since the issue isn't that samples arrive too slowly overall, it's that they
+  arrive in chunks larger than the assumed margin allows for). Widened to 300ms, with
+  `kMixerBufferTargetLen` (the backlog-trim cap) widened alongside it to 500ms so it doesn't
+  fight the wider margin by trimming away the exact slack just added.
 - **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
   squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
   treated as a genuine transition, filtering brief noise spikes that would otherwise pop the
