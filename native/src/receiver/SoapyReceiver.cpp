@@ -278,6 +278,9 @@ bool SoapyReceiver::startWindow(const std::string& windowId) {
     int settleMs = (config_.type == ReceiverType::RTL_SDR) ? kRtlSdrTuneSettleMs : 20;
     std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
 
+    hopCount_++;
+    hopSettleMsTotal_ += settleMs;
+
     audioSelector_->set_input_index(windowIdx);
     rfSelector_->set_output_index(windowIdx);
 
@@ -338,6 +341,18 @@ void SoapyReceiver::run(const std::function<std::string()>& nextWindowIdProvider
                     onWindowDone(nextId);
                 }
             }
+        }
+
+        double now = nowUnixSeconds();
+        if (now - lastHopReportAt_ >= 1.0) {
+            if (lastHopReportAt_ != 0.0) {
+                std::cerr << "SoapyReceiver " << config_.id << ": " << hopCount_
+                          << " hops in the last ~1s, ~" << hopSettleMsTotal_
+                          << "ms spent settling (~" << (hopSettleMsTotal_ / 10.0) << "% of wall time)\n";
+            }
+            hopCount_ = 0;
+            hopSettleMsTotal_ = 0.0;
+            lastHopReportAt_ = now;
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1));

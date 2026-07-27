@@ -137,6 +137,14 @@ private:
     // that from becoming a tight retry loop hammering the device and spamming the log.
     double nextStartAttemptAllowedAt_ = 0.0;
 
+    // Temporary diagnostic counters (see the periodic report in run()) - direct measurement of
+    // hop rate and settle-time overhead, added while investigating a chronic real-hardware
+    // AudioMixer "falling behind real time" symptom whose magnitude didn't track the settle-time
+    // constant the way the hop-dead-time theory predicted. Not exposed anywhere except stderr.
+    int hopCount_ = 0;
+    double hopSettleMsTotal_ = 0.0;
+    double lastHopReportAt_ = 0.0;
+
     std::atomic<bool> stopFlag_{false};
 };
 
