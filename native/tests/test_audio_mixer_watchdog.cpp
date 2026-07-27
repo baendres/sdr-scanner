@@ -79,8 +79,10 @@ TEST_CASE("AudioMixer::isAlive() detects a hung mixer thread") {
 
     output->block();
 
-    // kHeartbeatTimeoutSeconds is 5s in production code - poll well past that.
-    bool becameDead = waitUntil([&] { return !mixer.isAlive(); }, std::chrono::seconds(8));
+    // kHeartbeatTimeoutSeconds is 20s in production code (widened from 5s after real-hardware
+    // testing found that too tight a bound for a busy multi-threaded container - see the
+    // comment on that constant in AudioMixer.cpp) - poll well past that.
+    bool becameDead = waitUntil([&] { return !mixer.isAlive(); }, std::chrono::seconds(25));
     output->unblock(); // let the thread unstick so stop()/destruction can join it
     mixer.stop();
 

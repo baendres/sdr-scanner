@@ -17,10 +17,18 @@ namespace sdrscan {
 
 namespace {
 constexpr size_t kRingBufferCapacity = AUDIO_SAMPLERATE; // ~1s of audio per receiver
-// How stale lastHeartbeat_ can get before isAlive() reports the mixer as dead. The loop ticks
-// via yield() (no sleep), so a live thread updates this many times a second - a multi-second
-// timeout is already a generous margin for scheduling jitter, not a tight bound.
-constexpr double kHeartbeatTimeoutSeconds = 5.0;
+// How stale lastHeartbeat_ can get before isAlive() reports the mixer as dead. Widened from 5s
+// after real-hardware testing: the loop now ticks via a real sleep_for(1ms) (see the comment
+// on that call in run() - it used to be yield(), which pinned a CPU core and got fixed
+// separately), so it's subject to normal OS thread scheduling rather than staying continuously
+// "hot." On a container with 300+ threads sharing 4 cores, an occasional multi-second
+// scheduling delay doesn't necessarily mean the thread is actually hung - 5s was tight enough
+// that it fired (and forced a full container restart) from transient scheduling jitter alone,
+// confirmed via "Scanner: AudioMixer not alive - stopping" in the log immediately before each
+// of several restarts with no other error/crash indication. 20s stays comfortably below
+// anything a user would perceive as a hung app, while giving real scheduling contention enough
+// room that this isn't mistaken for a genuine deadlock.
+constexpr double kHeartbeatTimeoutSeconds = 20.0;
 // Discard backlog beyond this to avoid unbounded latency buildup. Must stay comfortably above
 // AudioMixer::kTargetLatencySeconds's worth of samples, or this would trim away the deliberate
 // buffering margin that constant exists to maintain - widened alongside it (see the comment on

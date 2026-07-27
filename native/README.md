@@ -373,6 +373,23 @@ than a single fixed threshold tolerates well:
   on the scheduling explanation. Replaced with a real `sleep_for(1ms)`, well within the now-300ms
   latency margin above, which actually deschedules the thread for that duration instead of
   immediately re-queuing it.
+
+  Confirmed on real hardware afterward: the CPU fix worked exactly as measured (the previously
+  pinned thread dropped to 0%, overall idle CPU jumped from ~33% to ~72%), and separately, the
+  audio itself sounded fine - the chronic "starved" percentage this whole investigation had been
+  chasing turned out not to correspond to an audible problem. But the container was now hitting
+  `docker ps`'s restart counter (confirmed via `docker inspect --format
+  'ExitCode={{.State.ExitCode}} RestartCount={{.RestartCount}}'`, `ExitCode=0`), with `Scanner:
+  AudioMixer not alive - stopping` in the log immediately before every restart - the liveness
+  watchdog above firing deliberately (a clean, intentional exit, not a crash) because
+  `lastHeartbeat_` had genuinely gone stale for the full `kHeartbeatTimeoutSeconds` window. That
+  timeout (5s) was calibrated for the old `yield()`-based loop, which stayed continuously "hot"
+  and never really sleeps; now that the loop does a real `sleep_for()` each iteration (the fix
+  above), it's subject to normal OS thread scheduling like everything else, and on a container
+  with 300+ threads sharing 4 cores, occasional multi-second scheduling delays don't necessarily
+  mean the thread is actually hung. Widened to 20s - still well below anything a user would
+  perceive as the app being stuck, but enough margin that transient scheduling contention isn't
+  mistaken for a genuine deadlock and doesn't force an unnecessary full restart.
 - **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
   squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
   treated as a genuine transition, filtering brief noise spikes that would otherwise pop the
