@@ -4,6 +4,7 @@
 #include <gnuradio/filter/firdes.h>
 
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
 
 namespace sdrscan {
@@ -86,11 +87,16 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     // this app's own code - a minimal bare GNU Radio flowgraph shows it too) that aliases into the
     // audio band through decimation. A tighter anti-aliasing filter here, before decimation, is the
     // standard remedy regardless of the spur's exact source frequency.
+    std::vector<float> inputFilterTaps =
+        gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, halfBandwidth, halfBandwidth / 4.0, 80.0);
+    // Temporary diagnostic (see native/README.md's adaptive-squelch/starvation investigation) -
+    // this filter's tap count scales with rfSampleRate_ / transition width, and a large count
+    // run continuously at a multi-MHz input rate is a real CPU cost distinct from every
+    // call-overhead fix tried so far.
+    std::cerr << "ChannelBlockFM " << channelId << ": rfSampleRate=" << rfSampleRate_
+              << " inputFilterTaps=" << inputFilterTaps.size() << "\n";
     blockFreqXlatingFilter_ = gr::filter::freq_xlating_fir_filter_ccf::make(
-        inputDecimation,
-        gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, halfBandwidth, halfBandwidth / 4.0, 80.0),
-        freqOffset_Hz,
-        rfSampleRate_);
+        inputDecimation, inputFilterTaps, freqOffset_Hz, rfSampleRate_);
 
     blockPowerSquelch_ = gr::analog::pwr_squelch_cc::make(
         effectiveSquelchThreshold(), 1.0 / (fmQuadRate_ * SQUELCH_TC), 0, false);

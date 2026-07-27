@@ -4,6 +4,7 @@
 #include <gnuradio/filter/firdes.h>
 
 #include <algorithm>
+#include <iostream>
 #include <stdexcept>
 
 namespace sdrscan {
@@ -40,11 +41,12 @@ ChannelBlockAM::ChannelBlockAM(const std::string& channelId,
     // See the matching note in ChannelBlockFM.cpp - low_pass_2's explicit stopband attenuation
     // (vs. low_pass's default ~53dB) gives more rejection to a hardware-originated spur that
     // aliases into the passband through decimation.
+    std::vector<float> inputFilterTaps = gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, 4000, 2000, 80.0);
+    // Temporary diagnostic - see the matching note in ChannelBlockFM.cpp.
+    std::cerr << "ChannelBlockAM " << channelId << ": rfSampleRate=" << rfSampleRate_
+              << " inputFilterTaps=" << inputFilterTaps.size() << "\n";
     blockFreqXlatingFilter_ = gr::filter::freq_xlating_fir_filter_ccf::make(
-        inputDecimation,
-        gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, 4000, 2000, 80.0),
-        freqOffset_Hz,
-        rfSampleRate_);
+        inputDecimation, inputFilterTaps, freqOffset_Hz, rfSampleRate_);
 
     blockPowerSquelch_ = gr::analog::pwr_squelch_cc::make(
         effectiveSquelchThreshold(), 1.0 / (audioSampleRate_ * SQUELCH_TC), 0, false);
