@@ -542,11 +542,12 @@ way upstream's `tunePause` is, since no hardware has needed that granularity yet
   channel statuses).
 - `PATCH /api/channels/{id}` - body may include any of: `squelchThreshold`,
   `squelchNoiseMargin_dB` (number or `null` to go back to a fixed `squelchThreshold` - see
-  "Adaptive squelch" above), `ctcssToneHz` (number or `null` to disable), `audioGain_dB`,
+  "Adaptive squelch" above), `noiseSquelchThreshold_dB` (number or `null` to disable - FM/NFM
+  only, see "FM noise squelch" above), `ctcssToneHz` (number or `null` to disable), `audioGain_dB`,
   `dwellTime_s`, `mute`, `solo` (`true`/`false`/`null`), `hold`, `forceActive`, `enabled`,
   `disableUntil` (unix seconds).
 - `POST /api/channels` - body: `{freq_hz, label?, mode?, audioGain_dB?, dwellTime_s?,
-  squelchThreshold?, squelchNoiseMargin_dB?, ctcssToneHz?}` -> `{id}`.
+  squelchThreshold?, squelchNoiseMargin_dB?, noiseSquelchThreshold_dB?, ctcssToneHz?}` -> `{id}`.
 - `DELETE /api/channels/{id}`
 - `PATCH /api/scanner` - body: `{maxChannelsPerWindow}`
 - `GET /api/receivers/scan` - enumerates connected SDR hardware (`SoapySDR::Device::enumerate()`
@@ -559,8 +560,8 @@ way upstream's `tunePause` is, since no hardware has needed that granularity yet
 `ChannelStatus` / `ScanWindowStart` / `ScanWindowDone` / `ScanWindowConfigsChanged` messages.
 Accepts the same control messages as the REST PATCH fields, as `{"type": "...", "data": {...}}`
 - e.g. `ChannelMute`, `ChannelHold`, `ChannelSolo`, `ChannelEnable`, `ChannelDisableUntil`,
-`ChannelForceActive`, `ChannelSetSquelch`, `ChannelSetSquelchNoiseMargin`, `ChannelSetCtcss`,
-`ChannelSetAudioGain`, `ChannelSetDwellTime`.
+`ChannelForceActive`, `ChannelSetSquelch`, `ChannelSetSquelchNoiseMargin`,
+`ChannelSetNoiseSquelchThreshold`, `ChannelSetCtcss`, `ChannelSetAudioGain`, `ChannelSetDwellTime`.
 
 Note: the Python web UI had grown a PIN-based "listen only vs. control" access gate
 (`SDRSCANNER_CONTROL_PIN`). That's not reimplemented here yet - every connected client can
