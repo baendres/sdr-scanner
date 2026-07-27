@@ -390,6 +390,29 @@ than a single fixed threshold tolerates well:
   mean the thread is actually hung. Widened to 20s - still well below anything a user would
   perceive as the app being stuck, but enough margin that transient scheduling contention isn't
   mistaken for a genuine deadlock and doesn't force an unnecessary full restart.
+
+  That still didn't stop the crash-restart cycle - the watchdog fired again with the wider
+  timeout too, meaning the real stall was genuinely 20+ seconds, not "just" a few seconds of
+  scheduling jitter. Rather than keep widening a timeout that was clearly treating a symptom,
+  `AudioMixer::run()`'s loop got temporary per-phase timing instrumentation (logging whenever a
+  single iteration takes >200ms, broken down by read/mix/send phase) to get a direct answer.
+  That immediately pointed at `AudioOutputWebsocket::send()`: unlike every other `AudioOutput`
+  (including `AudioOutputIcecast`, which defers its own network I/O to a dedicated thread for
+  exactly this reason), it called `WsStream::write()` - a synchronous socket write with no
+  timeout configured - directly on `AudioMixer`'s own thread, once per connected client, per
+  frame. A single slow or unresponsive WebSocket client (a browser tab left open but not
+  reading, a laptop that went to sleep mid-connection, ...) could block that call indefinitely,
+  freezing every receiver's audio at once and eventually tripping the liveness watchdog - the
+  code's own comment on the graceful-close path even already warned about this exact failure
+  mode, just hadn't been applied to the write in `send()`. Fixed by splitting `send()` the same
+  way `AudioOutputIcecast` already does: it now only enqueues frames (`frameQueue_`, a quick
+  mutex-guarded push, never blocks), and a new dedicated `writerThread_` drains that queue and
+  performs the actual writes - so a stuck client can no longer stall anything upstream of it.
+  That writer thread snapshots the client list under `clientsMutex_` and releases the lock
+  *before* writing, rather than holding it for the whole write - holding it across a blocking
+  write would mean `close()` (which needs the same lock to close client sockets and unstick a
+  hung write during shutdown) would itself deadlock waiting on the very write it's trying to
+  interrupt.
 - **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
   squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
   treated as a genuine transition, filtering brief noise spikes that would otherwise pop the

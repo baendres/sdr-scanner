@@ -32,6 +32,9 @@ private:
     using WsStream = boost::beast::websocket::stream<boost::asio::ip::tcp::socket>;
 
     void acceptLoop();
+    // Drains frameQueue_ and performs the actual (blocking) per-client socket writes - see the
+    // comment on frameQueue_ for why this can't happen on AudioMixer's own thread.
+    void writerLoop();
 
     std::string host_;
     int port_;
@@ -53,6 +56,18 @@ private:
     // AudioOutputUdp) before actually writing to the socket.
     std::mutex outputBufferMutex_;
     std::vector<int16_t> outputBuffer_;
+
+    // Completed frames land here (send() just pushes, never blocks); writerLoop() on its own
+    // dedicated thread is what actually calls WsStream::write() - a real hardware crash-loop
+    // traced back to that write happening directly on AudioMixer's own thread instead: it's a
+    // synchronous socket write with no timeout configured, so one slow/unresponsive client (a
+    // browser tab open but not reading, a laptop that went to sleep mid-connection, ...) could
+    // block it indefinitely, freezing every receiver's audio at once and eventually tripping
+    // the liveness watchdog. Matches AudioOutputIcecast's existing send()-buffers/thread-writes
+    // split for the same reason.
+    std::mutex frameQueueMutex_;
+    std::vector<std::vector<int16_t>> frameQueue_;
+    std::thread writerThread_;
 };
 
 } // namespace sdrscan

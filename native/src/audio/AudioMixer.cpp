@@ -177,6 +177,14 @@ void AudioMixer::run() {
     while (!stopFlag_) {
         lastHeartbeat_ = nowUnixSeconds();
 
+        // Temporary diagnostic (see native/README.md's liveness-watchdog investigation): a real
+        // 20+ second heartbeat stall was observed on real hardware even after fixing the known
+        // CPU-monopolization bug, meaning something in this loop body itself is occasionally
+        // blocking for a long time, not just "normal" OS scheduling jitter. Timing each phase
+        // and logging which one dominates when a single iteration takes unusually long turns
+        // the next occurrence into a direct answer instead of another guess.
+        auto iterStart = std::chrono::steady_clock::now();
+
         for (int i = 0; i < numInputStreams_; i++) {
             std::vector<float> inBuf;
             int numRead = ringBuffers_[i]->read(inBuf);
@@ -184,6 +192,7 @@ void AudioMixer::run() {
                 mixBuffers[i].insert(mixBuffers[i].end(), inBuf.begin(), inBuf.end());
             }
         }
+        auto afterRead = std::chrono::steady_clock::now();
 
         double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count();
         double targetElapsed = std::max(0.0, elapsed - kTargetLatencySeconds);
@@ -220,8 +229,20 @@ void AudioMixer::run() {
                 buf.erase(buf.begin(), buf.begin() + toDrop);
             }
         }
+        auto afterMix = std::chrono::steady_clock::now();
 
         for (auto& o : outputs_) o->send(newSamples);
+        auto afterSend = std::chrono::steady_clock::now();
+
+        double totalMs = std::chrono::duration<double, std::milli>(afterSend - iterStart).count();
+        if (totalMs > 200.0) {
+            double readMs = std::chrono::duration<double, std::milli>(afterRead - iterStart).count();
+            double mixMs = std::chrono::duration<double, std::milli>(afterMix - afterRead).count();
+            double sendMs = std::chrono::duration<double, std::milli>(afterSend - afterMix).count();
+            std::cerr << "AudioMixer: slow iteration ~" << totalMs << "ms (read=" << readMs
+                      << "ms mix=" << mixMs << "ms send=" << sendMs << "ms samplesToMix="
+                      << samplesToMix << ")\n";
+        }
 
         auto now = std::chrono::steady_clock::now();
         if (now - lastStarvationReport >= std::chrono::seconds(1)) {

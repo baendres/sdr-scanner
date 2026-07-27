@@ -1,6 +1,7 @@
 #include "AudioOutputWebsocket.h"
 #include "../dsp/Const.h"
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -50,6 +51,7 @@ void AudioOutputWebsocket::reconnect() {
     acceptor_->non_blocking(true);
 
     acceptThread_ = std::thread(&AudioOutputWebsocket::acceptLoop, this);
+    writerThread_ = std::thread(&AudioOutputWebsocket::writerLoop, this);
 }
 
 void AudioOutputWebsocket::acceptLoop() {
@@ -87,6 +89,7 @@ void AudioOutputWebsocket::close() {
         acceptor_->close(ec);
     }
     if (acceptThread_.joinable()) acceptThread_.join();
+    if (writerThread_.joinable()) writerThread_.join();
     acceptor_.reset();
 
     // Close the raw socket rather than the graceful websocket::stream::close() - the latter
@@ -119,16 +122,52 @@ void AudioOutputWebsocket::send(const std::vector<int16_t>& samples) {
     }
     if (frames.empty()) return;
 
-    std::lock_guard<std::mutex> lock(clientsMutex_);
-    for (const auto& frame : frames) {
-        auto it = clients_.begin();
-        while (it != clients_.end()) {
-            boost::system::error_code ec;
-            (*it)->write(boost::asio::buffer(frame.data(), frame.size() * sizeof(int16_t)), ec);
-            if (ec) {
-                it = clients_.erase(it);
+    // Just enqueue - writerLoop() on its own thread does the actual (blocking) socket writes.
+    // See the header comment on frameQueue_ for why this can't happen here, on AudioMixer's
+    // own thread.
+    std::lock_guard<std::mutex> lock(frameQueueMutex_);
+    for (auto& frame : frames) frameQueue_.push_back(std::move(frame));
+}
+
+void AudioOutputWebsocket::writerLoop() {
+    while (!stopFlag_) {
+        std::vector<int16_t> frame;
+        {
+            std::lock_guard<std::mutex> lock(frameQueueMutex_);
+            if (frameQueue_.empty()) {
+                frame.clear();
             } else {
-                ++it;
+                frame = std::move(frameQueue_.front());
+                frameQueue_.erase(frameQueue_.begin());
+            }
+        }
+        if (frame.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        // Snapshot the client list (cheap - shared_ptr copies) and release clientsMutex_
+        // before doing any actual writing. Holding it across a blocking write would mean
+        // close() - which also needs this lock to close client sockets and unstick a write
+        // that's hung against an unresponsive peer - would itself deadlock waiting on a write
+        // it's trying to interrupt.
+        std::vector<std::shared_ptr<WsStream>> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex_);
+            snapshot = clients_;
+        }
+
+        std::vector<std::shared_ptr<WsStream>> failed;
+        for (auto& c : snapshot) {
+            boost::system::error_code ec;
+            c->write(boost::asio::buffer(frame.data(), frame.size() * sizeof(int16_t)), ec);
+            if (ec) failed.push_back(c);
+        }
+
+        if (!failed.empty()) {
+            std::lock_guard<std::mutex> lock(clientsMutex_);
+            for (auto& f : failed) {
+                clients_.erase(std::remove(clients_.begin(), clients_.end(), f), clients_.end());
             }
         }
     }
