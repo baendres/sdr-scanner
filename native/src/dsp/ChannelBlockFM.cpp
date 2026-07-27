@@ -207,7 +207,10 @@ void ChannelBlockFM::refreshAdaptiveSquelchThreshold() {
     // Scanner's separate control-plane thread. getStatus() and ChannelBlockEAS (for its internal
     // ChannelBlockFM) both call this from that safe thread instead.
     if (squelchNoiseMargin_dB_.has_value() && !forceActive_) {
-        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
+        double threshold = effectiveSquelchThreshold();
+        if (adaptiveThresholdChanged(threshold)) {
+            blockPowerSquelch_->set_threshold(threshold);
+        }
     }
 }
 

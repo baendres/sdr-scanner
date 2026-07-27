@@ -100,6 +100,17 @@ protected:
     // than through this - it's provided for subclasses that want the resolved value in one call.
     double effectiveSquelchThreshold() const;
 
+    // True only if newThreshold actually differs from the last value this returned true for (or
+    // this is the first call) - lets a caller skip a redundant gr block set_threshold() call.
+    // getStatus() (and therefore refreshAdaptiveSquelchThreshold()) runs on SoapyReceiver's
+    // ~1ms window-scheduling loop (see checkCurrentWindow()), far faster than the noise floor
+    // estimate itself can change (RSSI_UPDATE_FREQ_HZ, 4Hz) - without this, an adaptive-squelch
+    // channel would call into a live GNU Radio block's setter roughly 1000x more often than the
+    // threshold could possibly have moved. Real-hardware testing found this was enough overhead,
+    // multiplied across every adaptive-squelch channel in the active window, to make the whole
+    // receiver's audio production fall behind real time.
+    bool adaptiveThresholdChanged(double newThreshold);
+
     // Time-based debounce: filters brief noise spikes from being treated as a genuine
     // open/close by requiring the raw squelch-open decision to persist for
     // SQUELCH_DEBOUNCE_SECONDS before the reported/gated state follows it. Call once per
@@ -122,6 +133,8 @@ protected:
     bool debounceRawUnmuted_ = false;
     double debounceRawChangedAt_ = 0.0;
     bool debounceStableUnmuted_ = false;
+
+    std::optional<double> lastPushedAdaptiveThreshold_;
 
     bool active_ = false;
     double lastActive_ = 0.0;

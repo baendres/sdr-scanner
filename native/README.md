@@ -238,17 +238,31 @@ than a single fixed threshold tolerates well:
   actually in effect at a time. `ChannelBlockEAS` doesn't have a squelch block of its own; it
   just forwards the margin to its internal `ChannelBlockFM`. The resolved threshold is only ever
   pushed to the real squelch block (`set_threshold()`) from `getStatus()`/
-  `refreshAdaptiveSquelchThreshold()` - i.e. from Scanner's control-plane thread, the same one
-  every other hot-update setter in this codebase already runs on - never from `updateRSSI()`
-  itself, which runs on the flowgraph's own worker thread. An earlier version pushed it straight
-  from `updateRSSI()`, calling one live block's setter from inside a different block's `work()`
-  call on the flowgraph thread - a threading pattern found nowhere else in this codebase, and one
-  that hung the flowgraph's scheduler on real hardware (observed as `AudioMixer: receiver N
-  starved for ... samples (~100% silence-filled)` and the liveness watchdog eventually firing) as
-  soon as a channel had an adaptive margin configured. `ChannelBlockEAS` calls
+  `refreshAdaptiveSquelchThreshold()` - a separate thread from the flowgraph's own worker thread,
+  the same one every other hot-update setter in this codebase already runs on - never from
+  `updateRSSI()` itself, which runs on the flowgraph's own worker thread (called from
+  `Mag2ToPowerBlock`'s `work()`). An earlier version pushed it straight from `updateRSSI()`,
+  calling one live block's setter from inside a different block's `work()` call on the flowgraph
+  thread - a threading pattern found nowhere else in this codebase, and one that hung the
+  flowgraph's scheduler on real hardware (observed as `AudioMixer: receiver N starved for ...
+  samples (~100% silence-filled)` and the liveness watchdog eventually firing) as soon as a
+  channel had an adaptive margin configured. `ChannelBlockEAS` calls
   `refreshAdaptiveSquelchThreshold()` explicitly on its internal `ChannelBlockFM` for this reason
   too - it never calls that block's own `getStatus()` (see the class comment), so without this
   explicit nudge a NOAA/BFM_EAS channel's adaptive threshold would never update at all.
+
+  `getStatus()` itself turned out to run far more often than assumed when the above fix landed -
+  `SoapyReceiver::checkCurrentWindow()` calls it for every channel in the active window on every
+  iteration of its ~1ms window-scheduling loop (see `SoapyReceiver::run()`), not the ~100ms
+  cadence of Scanner's REST/WS-triggered control-plane updates. That's roughly 1000x more often
+  than the underlying noise floor estimate can actually change (`RSSI_UPDATE_FREQ_HZ`, 4Hz), and
+  calling into a live GNU Radio block's `set_threshold()` that often - once per adaptive-squelch
+  channel in the window - was itself enough overhead on real hardware to make a receiver's audio
+  production chronically fall behind real time (`~40-70% silence-filled`, not the ~100% of a full
+  hang, but still enough to eventually trip the liveness watchdog). `ChannelBlockBase::
+  adaptiveThresholdChanged()` fixes this by only pushing when the computed threshold has actually
+  moved since the last push, which in practice throttles it back down to the noise floor's own
+  update rate.
 - **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
   squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
   treated as a genuine transition, filtering brief noise spikes that would otherwise pop the

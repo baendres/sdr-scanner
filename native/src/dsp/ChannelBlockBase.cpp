@@ -69,6 +69,14 @@ double ChannelBlockBase::effectiveSquelchThreshold() const {
     return squelchThreshold_;
 }
 
+bool ChannelBlockBase::adaptiveThresholdChanged(double newThreshold) {
+    if (lastPushedAdaptiveThreshold_.has_value() && *lastPushedAdaptiveThreshold_ == newThreshold) {
+        return false;
+    }
+    lastPushedAdaptiveThreshold_ = newThreshold;
+    return true;
+}
+
 bool ChannelBlockBase::debounceSquelch(bool rawUnmuted) {
     double now = nowUnixSeconds();
     if (rawUnmuted != debounceRawUnmuted_) {

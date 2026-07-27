@@ -21,6 +21,7 @@ namespace {
 class TestChannelBlock : public ChannelBlockBase {
 public:
     using ChannelBlockBase::ChannelBlockBase;
+    using ChannelBlockBase::adaptiveThresholdChanged;
     using ChannelBlockBase::debounceSquelch;
     using ChannelBlockBase::effectiveSquelchThreshold;
     using ChannelBlockBase::updateRSSI;
@@ -98,4 +99,20 @@ TEST_CASE("effectiveSquelchThreshold follows the noise floor as it moves") {
     for (int i = 0; i < 500; i++) block->updateRSSI(-30.0f);
     CHECK(block->effectiveSquelchThreshold() > -60.0);
     CHECK(block->effectiveSquelchThreshold() < -20.0);
+}
+
+TEST_CASE("adaptiveThresholdChanged reports true only on genuine changes") {
+    // Regression test: real-hardware testing found getStatus() (and therefore this check) runs
+    // on SoapyReceiver's ~1ms window-scheduling loop, not Scanner's ~100ms control-plane poll as
+    // originally assumed - repeatedly calling a live squelch block's set_threshold() at that
+    // rate, once per adaptive-squelch channel in the active window, was enough overhead to make
+    // real receivers fall behind real-time audio production. This is what a caller uses to skip
+    // that call unless the value has actually moved.
+    auto block = makeBlock(-55.0, /*squelchNoiseMargin_dB=*/6.0);
+
+    CHECK(block->adaptiveThresholdChanged(-50.0) == true); // first call always reports changed
+    CHECK(block->adaptiveThresholdChanged(-50.0) == false); // same value repeatedly - no change
+    CHECK(block->adaptiveThresholdChanged(-50.0) == false);
+    CHECK(block->adaptiveThresholdChanged(-49.5) == true); // genuinely moved
+    CHECK(block->adaptiveThresholdChanged(-49.5) == false); // settled at the new value
 }

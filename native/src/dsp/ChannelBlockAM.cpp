@@ -127,8 +127,13 @@ void ChannelBlockAM::setAudioGain(double audioGain_dB) {
 ChannelStatus ChannelBlockAM::getStatus() {
     // Adaptive squelch's threshold is applied here rather than from updateRSSI() (which runs on
     // the flowgraph's own worker thread) - see the matching note in ChannelBlockFM::getStatus().
+    // Only pushed when it's actually changed (see adaptiveThresholdChanged()'s comment) - this
+    // runs on SoapyReceiver's ~1ms window-scheduling loop, far faster than the value can move.
     if (squelchNoiseMargin_dB_.has_value() && !forceActive_) {
-        blockPowerSquelch_->set_threshold(effectiveSquelchThreshold());
+        double threshold = effectiveSquelchThreshold();
+        if (adaptiveThresholdChanged(threshold)) {
+            blockPowerSquelch_->set_threshold(threshold);
+        }
     }
 
     // forceActive is an explicit operator override, not a squelch reading, so it bypasses the
