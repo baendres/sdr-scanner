@@ -57,11 +57,6 @@ public:
     void setNoiseSquelchThreshold(std::optional<double> thresholdDb) override;
     ChannelStatus getStatus() override;
 
-    // Latest reference-band ("hiss") level, in dBFS - exposed for tests to verify the
-    // measurement itself discriminates clean signal from broadband noise, independent of
-    // whatever threshold a particular test picks.
-    float noiseRefLevel() const { return noiseRefLevel_dBFS_; }
-
     // Pushes the current adaptive-squelch threshold (if configured) to blockPowerSquelch_,
     // without touching CTCSS/debounce/the audio gate or reporting status - just the threshold
     // update, safe to call from Scanner's control-plane thread. getStatus() already does this as
@@ -88,11 +83,6 @@ private:
     int rfSampleRate_;
     std::optional<double> ctcssToneHz_;
     std::optional<double> noiseSquelchThreshold_dB_;
-    // Latest reference-band ("hiss") power reading, in dBFS - written from the flowgraph's own
-    // worker thread (via blockNoiseRef_'s callback, same pattern as ChannelBlockBase::
-    // updateRSSI()), read from getStatus() on the control-plane thread. See the noise squelch
-    // chain construction comment for the discrimination logic this feeds.
-    float noiseRefLevel_dBFS_ = 0.0f;
 
     gr::filter::freq_xlating_fir_filter_ccf::sptr blockFreqXlatingFilter_;
     // Second channelization stage - only present when splitDecimation() found a worthwhile

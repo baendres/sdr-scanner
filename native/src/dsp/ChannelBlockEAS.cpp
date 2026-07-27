@@ -134,6 +134,7 @@ ChannelStatus ChannelBlockEAS::getStatus() {
     rssi_dBFS_ = blockFm_->rssi();
     noiseFloor_dBFS_ = blockFm_->noiseFloor();
     volume_dBFS_ = blockFm_->volume();
+    noiseRefLevel_dBFS_ = blockFm_->noiseRefLevel();
 
     return reportStatus(status);
 }

@@ -299,7 +299,7 @@ ChannelStatus ChannelBlockFM::getStatus() {
     // noise doesn't, regardless of how long it persists - this is what rejects the noise
     // impulses that are long enough to otherwise pass both the power squelch and debounce.
     bool noiseOk = forceActive_ || !noiseSquelchThreshold_dB_.has_value()
-                    || noiseRefLevel_dBFS_ < *noiseSquelchThreshold_dB_;
+                    || noiseRefLevel_dBFS_.value_or(0.0f) < *noiseSquelchThreshold_dB_;
     bool rawUnmuted = blockPowerSquelch_->unmuted() && ctcssOk && noiseOk;
     // Debounce filters brief noise spikes from opening/closing the channel on their own (see
     // SQUELCH_DEBOUNCE_SECONDS) - this is what actually drives real audio (blockAudioGate_,

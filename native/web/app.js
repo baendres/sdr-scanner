@@ -187,7 +187,8 @@ function renderActiveList() {
 
     const meters = document.createElement("div");
     meters.className = "meters";
-    meters.textContent = `RSSI: ${st.rssi ?? ""}   NF: ${st.noiseFloor ?? ""}   VOL: ${st.volume ?? ""}`;
+    meters.textContent = `RSSI: ${st.rssi ?? ""}   NF: ${st.noiseFloor ?? ""}   VOL: ${st.volume ?? ""}` +
+      (st.noiseRefLevel != null ? `   NoiseRef: ${st.noiseRefLevel}` : "");
 
     div.appendChild(top);
     div.appendChild(meters);

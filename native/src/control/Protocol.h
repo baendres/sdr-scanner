@@ -68,6 +68,7 @@ inline json channelStatusToJson(const ChannelStatusUpdate& u) {
         {"rssi", u.rssi_dBFS.has_value() ? json(*u.rssi_dBFS) : json(nullptr)},
         {"noiseFloor", u.noiseFloor_dBFS.has_value() ? json(*u.noiseFloor_dBFS) : json(nullptr)},
         {"volume", u.volume_dBFS.has_value() ? json(*u.volume_dBFS) : json(nullptr)},
+        {"noiseRefLevel", u.noiseRefLevel_dBFS.has_value() ? json(*u.noiseRefLevel_dBFS) : json(nullptr)},
     };
 }
 

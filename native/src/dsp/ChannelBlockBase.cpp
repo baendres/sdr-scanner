@@ -155,6 +155,7 @@ ChannelStatus ChannelBlockBase::reportStatus(ChannelStatus status) {
             update.rssi_dBFS = rssi_dBFS_;
             update.noiseFloor_dBFS = noiseFloor_dBFS_;
             update.volume_dBFS = volume_dBFS_;
+            update.noiseRefLevel_dBFS = noiseRefLevel_dBFS_;
             statusCallback_(update);
         }
     }

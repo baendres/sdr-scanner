@@ -44,6 +44,9 @@ struct ChannelStatusUpdate {
     std::optional<float> rssi_dBFS;
     std::optional<float> noiseFloor_dBFS;
     std::optional<float> volume_dBFS;
+    // FM/NFM only (see ChannelBlockFM's noise squelch chain) - unset for AM/EAS-without-FM-
+    // telemetry-copy or before the reference band's first measurement.
+    std::optional<float> noiseRefLevel_dBFS;
 };
 
 std::string receiverTypeToString(ReceiverType type);

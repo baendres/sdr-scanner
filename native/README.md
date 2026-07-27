@@ -469,6 +469,15 @@ Implementation, in `ChannelBlockFM`:
   /api/channels/{id}` and the `ChannelSetNoiseSquelchThreshold` WS message), same optional/nullable
   pattern as `ctcssToneHz` and `squelchNoiseMargin_dB`. Web UI: a "Noise Squelch (dB)" field next
   to CTCSS on both the main control page and the channel-settings table.
+- The live reading itself (`noiseRefLevel_dBFS_`) is surfaced as `noiseRefLevel` in
+  `ChannelStatusUpdate`/`ChannelStatus` WS broadcasts and shown alongside RSSI/noise-floor/volume
+  in the main page's active-channel list (`NoiseRef: ...`), the same telemetry pattern
+  `updateRSSI()`/`updateVolume()` already use - so a threshold can be picked by watching the real
+  number on a channel that's been popping (quiet vs. captured-signal levels) instead of guessing.
+  Lives on `ChannelBlockBase` (not `ChannelBlockFM`) so `reportStatus()` can include it generically;
+  only `ChannelBlockFM` ever writes it, and `ChannelBlockEAS` copies it from its internal FM block
+  the same way it already does for rssi/noiseFloor/volume - unset (`null`) for AM/NOAA-without-FM-
+  telemetry or before the reference band's first measurement.
 
 ### NOAA / BFM_EAS (attention-tone) channel modes
 

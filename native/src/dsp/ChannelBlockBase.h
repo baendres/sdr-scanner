@@ -95,6 +95,9 @@ public:
     std::optional<float> rssi() const { return rssi_dBFS_; }
     std::optional<float> noiseFloor() const { return noiseFloor_dBFS_; }
     std::optional<float> volume() const { return volume_dBFS_; }
+    // FM/NFM only - see ChannelBlockFM's noise squelch chain, which is the only thing that ever
+    // writes noiseRefLevel_dBFS_. Unset for AM or before the reference band's first measurement.
+    std::optional<float> noiseRefLevel() const { return noiseRefLevel_dBFS_; }
 
 protected:
     // Common status bookkeeping shared by squelch-gated demod modes: given whether the
@@ -176,6 +179,7 @@ protected:
     std::optional<float> rssi_dBFS_;
     std::optional<float> noiseFloor_dBFS_;
     std::optional<float> volume_dBFS_;
+    std::optional<float> noiseRefLevel_dBFS_;
 
     std::function<void(ChannelStatusUpdate)> statusCallback_;
 

@@ -288,12 +288,14 @@ TEST_CASE("Noise squelch rejects broadband noise that clears power squelch but h
     auto probeClean = makeChannel(std::nullopt);
     runClean(probeClean);
     probeClean->getStatus(); // lets the reference-band callback populate noiseRefLevel()
-    float cleanLevel = probeClean->noiseRefLevel();
+    REQUIRE(probeClean->noiseRefLevel().has_value());
+    float cleanLevel = *probeClean->noiseRefLevel();
 
     auto probeNoisy = makeChannel(std::nullopt);
     runNoisy(probeNoisy);
     probeNoisy->getStatus();
-    float noisyLevel = probeNoisy->noiseRefLevel();
+    REQUIRE(probeNoisy->noiseRefLevel().has_value());
+    float noisyLevel = *probeNoisy->noiseRefLevel();
 
     REQUIRE(noisyLevel > cleanLevel + 6.0); // meaningfully noisier, not just measurement jitter
     double threshold = (cleanLevel + noisyLevel) / 2.0;
