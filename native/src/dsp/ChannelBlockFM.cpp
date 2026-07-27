@@ -25,6 +25,13 @@ void computeDeemphTaps(double tau, double sampleRate, std::vector<double>& fftap
     fbtaps = {1.0, -p1};
 }
 
+// Minimum stage-2 decimation splitDecimation() will settle for (see ChannelBlockBase.h) - low
+// enough that the intermediate rate stays comfortably above 2x halfBandwidth (with margin for
+// stage 2's own halfBandwidth/4 transition) even in the narrowest realistic case, high enough
+// that stage 1's own transition band (intermediateRate/2 - halfBandwidth) stays wide, which is
+// what keeps stage 1 cheap despite running at the full RF rate.
+constexpr int kMinStage2Decim = 4;
+
 } // namespace
 
 ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
@@ -87,16 +94,41 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     // this app's own code - a minimal bare GNU Radio flowgraph shows it too) that aliases into the
     // audio band through decimation. A tighter anti-aliasing filter here, before decimation, is the
     // standard remedy regardless of the spur's exact source frequency.
-    std::vector<float> inputFilterTaps =
-        gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, halfBandwidth, halfBandwidth / 4.0, 80.0);
-    // Temporary diagnostic (see native/README.md's adaptive-squelch/starvation investigation) -
-    // this filter's tap count scales with rfSampleRate_ / transition width, and a large count
-    // run continuously at a multi-MHz input rate is a real CPU cost distinct from every
-    // call-overhead fix tried so far.
-    std::cerr << "ChannelBlockFM " << channelId << ": rfSampleRate=" << rfSampleRate_
-              << " inputFilterTaps=" << inputFilterTaps.size() << "\n";
+    //
+    // Two-stage channelization (see native/README.md): a single filter doing the full sharp
+    // (halfBandwidth/4 transition, 80dB) selectivity directly at rfSampleRate_ was measured on
+    // real hardware at 3700-5400+ taps run continuously at 2+ Msps - genuinely enough compute
+    // (~10 billion MACs/sec) to be the actual cause of chronic real-time audio starvation, not
+    // any of the call-overhead/timing issues fixed earlier. splitDecimation() finds a
+    // stage1/stage2 split when the ratio is large enough to benefit: stage 1 frequency-translates
+    // and coarsely decimates with a *wide* transition band (cheap despite the high input rate,
+    // and still 80dB stopband - that's what matters for rejecting the spur above, not transition
+    // narrowness) down to an intermediate rate; stage 2 applies the exact same sharp selectivity
+    // as before, just evaluated at that much lower rate, where the identical absolute-Hz
+    // transition width is a far larger fraction of the sample rate and needs far fewer taps.
+    // Falls back to the original single-stage design when the ratio's too small to be worth
+    // splitting (blockChannelFilter_ stays null - see the header comment).
+    auto [stage1Decim, stage2Decim] = splitDecimation(inputDecimation, kMinStage2Decim);
+    int intermediateRate = rfSampleRate_ / stage1Decim;
+    std::vector<float> stage1Taps;
+    if (stage2Decim > 1) {
+        double stage1Transition = intermediateRate / 2.0 - halfBandwidth;
+        stage1Taps = gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, halfBandwidth, stage1Transition, 80.0);
+    } else {
+        stage1Taps = gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, halfBandwidth, halfBandwidth / 4.0, 80.0);
+    }
     blockFreqXlatingFilter_ = gr::filter::freq_xlating_fir_filter_ccf::make(
-        inputDecimation, inputFilterTaps, freqOffset_Hz, rfSampleRate_);
+        stage1Decim, stage1Taps, freqOffset_Hz, rfSampleRate_);
+
+    std::vector<float> stage2Taps;
+    if (stage2Decim > 1) {
+        stage2Taps = gr::filter::firdes::low_pass_2(1.0, intermediateRate, halfBandwidth, halfBandwidth / 4.0, 80.0);
+        blockChannelFilter_ = gr::filter::fir_filter_ccf::make(stage2Decim, stage2Taps);
+    }
+    // Temporary diagnostic (see native/README.md's adaptive-squelch/starvation investigation).
+    std::cerr << "ChannelBlockFM " << channelId << ": rfSampleRate=" << rfSampleRate_
+              << " stage1Decim=" << stage1Decim << " stage1Taps=" << stage1Taps.size()
+              << " stage2Decim=" << stage2Decim << " stage2Taps=" << stage2Taps.size() << "\n";
 
     blockPowerSquelch_ = gr::analog::pwr_squelch_cc::make(
         effectiveSquelchThreshold(), 1.0 / (fmQuadRate_ * SQUELCH_TC), 0, false);
@@ -138,7 +170,15 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     // Connections - RF chain
 
     connect(self(), 0, blockFreqXlatingFilter_, 0);
-    connect(blockFreqXlatingFilter_, 0, blockPowerSquelch_, 0);
+    // blockChannelFilter_ (when present) is the final channelized signal - squelch/RSSI read
+    // from whichever stage actually produced it, matching the single-stage behavior exactly
+    // when there's no split (see the header comment on blockChannelFilter_).
+    gr::basic_block_sptr channelized = blockFreqXlatingFilter_;
+    if (blockChannelFilter_) {
+        connect(blockFreqXlatingFilter_, 0, blockChannelFilter_, 0);
+        channelized = blockChannelFilter_;
+    }
+    connect(channelized, 0, blockPowerSquelch_, 0);
     connect(blockPowerSquelch_, 0, blockQuadDemod_, 0);
     connect(blockQuadDemod_, 0, blockDeemph_, 0);
     // blockCtcssSquelch_ is a side tap (status only, see the header note) - the real audio path
@@ -151,7 +191,7 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     connect(blockAudioGain_, 0, blockAudioMute_, 0);
 
     // RSSI chain
-    connect(blockFreqXlatingFilter_, 0, blockRssiComplexToMag2_, 0);
+    connect(channelized, 0, blockRssiComplexToMag2_, 0);
     connect(blockRssiComplexToMag2_, 0, blockRssiLowPass_, 0);
     connect(blockRssiLowPass_, 0, blockRssiDecimate_, 0);
     connect(blockRssiDecimate_, 0, blockRssi_, 0);

@@ -293,6 +293,41 @@ than a single fixed threshold tolerates well:
   updates at 4Hz - so `SoapyReceiver::run()`'s loop interval was widened from 1ms to 10ms,
   cutting the polling-driven overhead by ~10x directly rather than continuing to whack-a-mole
   individual calls inside each iteration.
+
+  That fix *still* didn't move the starvation numbers, and a fresh real-hardware capture with
+  the hop-rate diagnostic running alongside `AudioMixer`'s log settled it: starvation was
+  showing up in seconds with **zero hops** at all, ruling out hop timing as the driver
+  entirely - this was happening while a receiver just sat parked on one window, not during
+  transitions between windows. That redirected the investigation to the actual DSP compute
+  cost of the currently-selected window's demod chain, specifically `ChannelBlockFM`/
+  `ChannelBlockAM`'s input channelization filter (`freq_xlating_fir_filter_ccf`) - the same
+  block whose `low_pass_2` design was deliberately tightened earlier (see the CTCSS/spur note)
+  to reject a hardware spur, at the cost of a much higher tap count than the original `low_pass`
+  default. A temporary diagnostic logging that filter's actual tap count at construction time
+  confirmed it: **3723-5417 taps**, run continuously at `rfSampleRate` (up to 2.048 Msps) - on
+  the order of 10 billion multiply-accumulates/sec for a single active channel, a completely
+  different scale of cost than any of the call-overhead or timing issues fixed above, and
+  exactly the gap this file's own "Simplifications vs. the Python version" section already
+  flagged and deferred (see below) before real-hardware load ever demanded it.
+
+  The fix is **two-stage channelization** (`ChannelBlockBase::splitDecimation()`, used by both
+  `ChannelBlockFM` and `ChannelBlockAM`): rather than one filter doing the full sharp selectivity
+  (a narrow transition band relative to the RF rate - what actually drives the huge tap count)
+  directly at the full RF rate, stage 1 (`freq_xlating_fir_filter_ccf`, still doing the
+  frequency translation) uses a *wide* transition band - cheap despite running at the full RF
+  rate, and still the same 80dB stopband, since attenuation is what matters for rejecting the
+  spur, not transition narrowness - to coarsely decimate down to an intermediate rate. Stage 2
+  (a plain `fir_filter_ccf`, no frequency translation needed since stage 1 already did that)
+  then applies the *exact same* sharp selectivity as before (identical passband/transition/
+  attenuation), just evaluated at that much lower intermediate rate, where the same absolute-Hz
+  transition width is a far larger fraction of the sample rate and needs far fewer taps.
+  `splitDecimation()` picks the split (smallest stage-2 decimation factor that still evenly
+  divides the total, so stage 1 absorbs as much of the reduction as possible) and falls back to
+  the original single-stage design when the ratio is too small to be worth splitting - in which
+  case `blockChannelFilter_` stays null and behavior is unchanged. Squelch and RSSI both read
+  from whichever stage actually produced the final channelized signal, so this is purely a
+  compute-cost change, not a filtering/selectivity change - same audio and squelch behavior,
+  far less CPU per sample.
 - **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
   squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
   treated as a genuine transition, filtering brief noise spikes that would otherwise pop the
@@ -357,10 +392,12 @@ way upstream's `tunePause` is, since no hardware has needed that granularity yet
 
 ### Simplifications vs. the Python version (documented in code comments too)
 
-- Input channelization always uses a single-stage `freq_xlating_fir_filter_ccf` rather than
-  the Python version's optional two-stage FFT-filter split for very high decimation ratios.
-  That was a CPU optimization, not a correctness requirement - revisit if profiling shows
-  it's needed for a particular receiver's sample rate.
+- Input channelization uses a two-stage time-domain FIR split (`ChannelBlockBase::
+  splitDecimation()`, falling back to a single stage at low decimation ratios - see "Adaptive
+  squelch and squelch debounce" above for why this was added) rather than the Python version's
+  FFT-filter split for very high decimation ratios. Both address the same real-time-compute
+  problem at high decimation ratios; revisit if profiling ever shows the time-domain approach
+  still isn't enough for a particular receiver's sample rate.
 - FM de-emphasis is implemented directly via `iir_filter_ffd` with hand-computed coefficients
   (the standard GNU Radio de-emphasis formula), since `fm_deemph`/`nbfm_rx` are GRC-only
   hierarchical blocks with no C++ class - same for the input channelization decimation.

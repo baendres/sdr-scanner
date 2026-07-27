@@ -82,6 +82,10 @@ private:
     std::optional<double> ctcssToneHz_;
 
     gr::filter::freq_xlating_fir_filter_ccf::sptr blockFreqXlatingFilter_;
+    // Second channelization stage - only present when splitDecimation() found a worthwhile
+    // split (see native/README.md's "two-stage channelization" note); null otherwise, in which
+    // case blockFreqXlatingFilter_ alone does the full sharp/narrow filtering, as before.
+    gr::filter::fir_filter_ccf::sptr blockChannelFilter_;
     gr::analog::pwr_squelch_cc::sptr blockPowerSquelch_;
     gr::analog::quadrature_demod_cf::sptr blockQuadDemod_;
     gr::filter::iir_filter_ffd::sptr blockDeemph_;

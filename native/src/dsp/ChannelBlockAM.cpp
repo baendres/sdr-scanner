@@ -9,6 +9,11 @@
 
 namespace sdrscan {
 
+namespace {
+// See the matching constant/comment in ChannelBlockFM.cpp.
+constexpr int kMinStage2Decim = 4;
+} // namespace
+
 ChannelBlockAM::ChannelBlockAM(const std::string& channelId,
                                 const std::string& label,
                                 bool mute,
@@ -40,13 +45,32 @@ ChannelBlockAM::ChannelBlockAM(const std::string& channelId,
 
     // See the matching note in ChannelBlockFM.cpp - low_pass_2's explicit stopband attenuation
     // (vs. low_pass's default ~53dB) gives more rejection to a hardware-originated spur that
-    // aliases into the passband through decimation.
-    std::vector<float> inputFilterTaps = gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, 4000, 2000, 80.0);
+    // aliases into the passband through decimation. Two-stage channelization: see the detailed
+    // note in ChannelBlockFM.cpp - same reasoning, AM's passband/transition are just fixed
+    // values (4000/2000 Hz) instead of derived from a per-channel deviation.
+    constexpr double kPassbandHz = 4000.0;
+    constexpr double kTransitionHz = 2000.0;
+    auto [stage1Decim, stage2Decim] = splitDecimation(inputDecimation, kMinStage2Decim);
+    int intermediateRate = rfSampleRate_ / stage1Decim;
+    std::vector<float> stage1Taps;
+    if (stage2Decim > 1) {
+        double stage1Transition = intermediateRate / 2.0 - kPassbandHz;
+        stage1Taps = gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, kPassbandHz, stage1Transition, 80.0);
+    } else {
+        stage1Taps = gr::filter::firdes::low_pass_2(1.0, rfSampleRate_, kPassbandHz, kTransitionHz, 80.0);
+    }
+    blockFreqXlatingFilter_ = gr::filter::freq_xlating_fir_filter_ccf::make(
+        stage1Decim, stage1Taps, freqOffset_Hz, rfSampleRate_);
+
+    std::vector<float> stage2Taps;
+    if (stage2Decim > 1) {
+        stage2Taps = gr::filter::firdes::low_pass_2(1.0, intermediateRate, kPassbandHz, kTransitionHz, 80.0);
+        blockChannelFilter_ = gr::filter::fir_filter_ccf::make(stage2Decim, stage2Taps);
+    }
     // Temporary diagnostic - see the matching note in ChannelBlockFM.cpp.
     std::cerr << "ChannelBlockAM " << channelId << ": rfSampleRate=" << rfSampleRate_
-              << " inputFilterTaps=" << inputFilterTaps.size() << "\n";
-    blockFreqXlatingFilter_ = gr::filter::freq_xlating_fir_filter_ccf::make(
-        inputDecimation, inputFilterTaps, freqOffset_Hz, rfSampleRate_);
+              << " stage1Decim=" << stage1Decim << " stage1Taps=" << stage1Taps.size()
+              << " stage2Decim=" << stage2Decim << " stage2Taps=" << stage2Taps.size() << "\n";
 
     blockPowerSquelch_ = gr::analog::pwr_squelch_cc::make(
         effectiveSquelchThreshold(), 1.0 / (audioSampleRate_ * SQUELCH_TC), 0, false);
@@ -77,7 +101,14 @@ ChannelBlockAM::ChannelBlockAM(const std::string& channelId,
     // Connections - RF chain
 
     connect(self(), 0, blockFreqXlatingFilter_, 0);
-    connect(blockFreqXlatingFilter_, 0, blockPowerSquelch_, 0);
+    // blockChannelFilter_ (when present) is the final channelized signal - see the matching
+    // comment in ChannelBlockFM.cpp.
+    gr::basic_block_sptr channelized = blockFreqXlatingFilter_;
+    if (blockChannelFilter_) {
+        connect(blockFreqXlatingFilter_, 0, blockChannelFilter_, 0);
+        channelized = blockChannelFilter_;
+    }
+    connect(channelized, 0, blockPowerSquelch_, 0);
     connect(blockPowerSquelch_, 0, blockAgc_, 0);
     connect(blockAgc_, 0, blockAmDemod_, 0);
     connect(blockAmDemod_, 0, blockAudioGate_, 0);
@@ -86,7 +117,7 @@ ChannelBlockAM::ChannelBlockAM(const std::string& channelId,
     connect(blockAudioGain_, 0, blockAudioMute_, 0);
 
     // RSSI chain
-    connect(blockFreqXlatingFilter_, 0, blockRssiComplexToMag2_, 0);
+    connect(channelized, 0, blockRssiComplexToMag2_, 0);
     connect(blockRssiComplexToMag2_, 0, blockRssiLowPass_, 0);
     connect(blockRssiLowPass_, 0, blockRssiDecimate_, 0);
     connect(blockRssiDecimate_, 0, blockRssi_, 0);

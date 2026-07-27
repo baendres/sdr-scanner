@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "../config/Types.h"
 #include "HelperBlocks.h"
@@ -15,6 +16,22 @@
 namespace sdrscan {
 
 inline double dbToRatio(double dB) { return std::pow(10.0, dB / 20.0); }
+
+// Splits a decimation ratio into {stage1, stage2} for two-stage input channelization (see the
+// "two-stage channelization" note in native/README.md): stage2 is the smallest factor of
+// totalDecim that's >= minStage2 (so the sharp/narrow channel-select filter runs at as low a
+// rate as possible), and stage1 absorbs the rest via a cheap wide-transition filter at the full
+// RF rate. Returns {totalDecim, 1} (i.e. "don't split") if no such factor exists - already a
+// modest enough ratio that a single sharp stage is cheap on its own, and splitting further
+// would just add a useless extra block with no real transition-width room to exploit.
+inline std::pair<int, int> splitDecimation(int totalDecim, int minStage2) {
+    for (int d2 = minStage2; d2 <= totalDecim; d2++) {
+        if (totalDecim % d2 == 0) {
+            return {totalDecim / d2, d2};
+        }
+    }
+    return {totalDecim, 1};
+}
 
 // C++ port of Channel.py's ChannelBlock_Base. A gr::hier_block2 taking a complex baseband
 // stream in (already tuned/decimated by the ScanWindow) and producing a float audio stream

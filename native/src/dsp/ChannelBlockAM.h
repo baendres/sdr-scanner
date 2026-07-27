@@ -48,6 +48,9 @@ private:
     int rfSampleRate_;
 
     gr::filter::freq_xlating_fir_filter_ccf::sptr blockFreqXlatingFilter_;
+    // Second channelization stage - see the matching header comment on ChannelBlockFM; null
+    // unless splitDecimation() found a worthwhile split.
+    gr::filter::fir_filter_ccf::sptr blockChannelFilter_;
     gr::analog::pwr_squelch_cc::sptr blockPowerSquelch_;
     gr::analog::feedforward_agc_cc::sptr blockAgc_;
     gr::blocks::complex_to_mag::sptr blockAmDemod_;
