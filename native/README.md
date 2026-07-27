@@ -276,6 +276,23 @@ than a single fixed threshold tolerates well:
   call, regardless of whether the debounced mute decision had actually changed -
   `ChannelBlockBase::setAudioGateMuted()` applies the same "only push on genuine change" guard
   used for the adaptive threshold.
+
+  That fix *also* didn't move the chronic starvation numbers on real hardware, which prompted
+  actually measuring the hop-hopping cost directly instead of continuing to guess: temporary
+  diagnostic logging (hops/sec and cumulative `kRtlSdrTuneSettleMs` overhead per receiver,
+  reported alongside `AudioMixer`'s own starvation log) showed hop settle time accounting for a
+  fairly steady ~16-24% of wall time - a real cost, but well short of the ~30-68% (averaging
+  around 45%) starvation actually observed, and the two didn't track each other: the same
+  measured settle overhead (e.g. "5 hops, 20%") showed up next to wildly different starvation
+  percentages from one second to the next. That pointed back to the ~1ms loop interval itself
+  (not any specific redundant call within it, both of which were already fixed above) as the
+  remaining cost: at that rate, `checkCurrentWindow()`/`getStatus()` acquires each live block's
+  parameter lock (`unmuted()` reads, etc.) roughly 1000 times/sec per channel in the active
+  window, and lock acquisition has real overhead even for a read. Nothing downstream needs that
+  granularity - window-hop timing works in ~100ms-1s increments, squelch debounce is 50ms, RSSI
+  updates at 4Hz - so `SoapyReceiver::run()`'s loop interval was widened from 1ms to 10ms,
+  cutting the polling-driven overhead by ~10x directly rather than continuing to whack-a-mole
+  individual calls inside each iteration.
 - **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
   squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
   treated as a genuine transition, filtering brief noise spikes that would otherwise pop the

@@ -355,7 +355,17 @@ void SoapyReceiver::run(const std::function<std::string()>& nextWindowIdProvider
             lastHopReportAt_ = now;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // This interval sets the polling rate for checkCurrentWindow()/getStatus() on every
+        // channel in the active window - real-hardware CPU profiling (top -H) found a 1ms
+        // interval here pinned one core near 100%, from the sheer call/lock-acquisition
+        // frequency against live GNU Radio blocks (unmuted() reads, etc), not from any specific
+        // redundant call (those were separately throttled - see adaptiveThresholdChanged()/
+        // setAudioGateMuted()). Nothing downstream needs sub-10ms granularity: window-hop timing
+        // works in ~100ms-1s increments (getMinimumScanTime()), squelch debounce is 50ms
+        // (SQUELCH_DEBOUNCE_SECONDS), and RSSI updates at 4Hz (RSSI_UPDATE_FREQ_HZ) - so widening
+        // this cuts the polling-driven overhead by ~10x with no meaningful loss of
+        // responsiveness anywhere else in the system.
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     if (windowRunning_) stopCurrentWindow();
