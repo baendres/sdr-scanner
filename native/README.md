@@ -263,6 +263,19 @@ than a single fixed threshold tolerates well:
   adaptiveThresholdChanged()` fixes this by only pushing when the computed threshold has actually
   moved since the last push, which in practice throttles it back down to the noise floor's own
   update rate.
+
+  That fix alone didn't fully resolve the chronic falling-behind symptom on real hardware - a
+  second instance of the exact same overhead pattern was found afterward via per-thread CPU
+  profiling (`top -H` inside the container): a single, unnamed `sdrscan` thread (not one of GNU
+  Radio's own per-block scheduler threads, which show up named after their block type) was
+  pinned near 100% of one core, while the rest of the system had headroom - i.e. not a
+  system-wide CPU or USB-bandwidth ceiling, but one specific hot thread. That thread is
+  `SoapyReceiver::run()`'s ~1ms window-scheduling loop, the same one driving `getStatus()`'s
+  call frequency above. `getStatus()` was also calling the inline audio gate's
+  `set_mute()` (`ChannelBlockFM`/`ChannelBlockAM::blockAudioGate_`) unconditionally on every
+  call, regardless of whether the debounced mute decision had actually changed -
+  `ChannelBlockBase::setAudioGateMuted()` applies the same "only push on genuine change" guard
+  used for the adaptive threshold.
 - **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
   squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
   treated as a genuine transition, filtering brief noise spikes that would otherwise pop the

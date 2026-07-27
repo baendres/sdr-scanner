@@ -228,7 +228,7 @@ ChannelStatus ChannelBlockFM::getStatus() {
     // is an explicit operator override, not a squelch reading, so it bypasses the debounce
     // rather than waiting out its hang time before taking effect.
     bool unmuted = forceActive_ ? true : debounceSquelch(rawUnmuted);
-    blockAudioGate_->set_mute(!unmuted);
+    setAudioGateMuted(blockAudioGate_, !unmuted);
     return computeAndReportStatus(unmuted);
 }
 

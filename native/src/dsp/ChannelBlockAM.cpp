@@ -140,7 +140,7 @@ ChannelStatus ChannelBlockAM::getStatus() {
     // debounce rather than waiting out its hang time before taking effect (see the matching
     // note in ChannelBlockFM::getStatus()).
     bool unmuted = forceActive_ ? true : debounceSquelch(blockPowerSquelch_->unmuted());
-    blockAudioGate_->set_mute(!unmuted);
+    setAudioGateMuted(blockAudioGate_, !unmuted);
     return computeAndReportStatus(unmuted);
 }
 

@@ -11,6 +11,8 @@
 #include <chrono>
 #include <thread>
 
+#include <gnuradio/blocks/mute.h>
+
 #include "../src/dsp/ChannelBlockBase.h"
 #include "../src/dsp/Const.h"
 
@@ -24,6 +26,7 @@ public:
     using ChannelBlockBase::adaptiveThresholdChanged;
     using ChannelBlockBase::debounceSquelch;
     using ChannelBlockBase::effectiveSquelchThreshold;
+    using ChannelBlockBase::setAudioGateMuted;
     using ChannelBlockBase::updateRSSI;
 
     void setForceActive(bool) override {}
@@ -115,4 +118,24 @@ TEST_CASE("adaptiveThresholdChanged reports true only on genuine changes") {
     CHECK(block->adaptiveThresholdChanged(-50.0) == false);
     CHECK(block->adaptiveThresholdChanged(-49.5) == true); // genuinely moved
     CHECK(block->adaptiveThresholdChanged(-49.5) == false); // settled at the new value
+}
+
+TEST_CASE("setAudioGateMuted pushes to the gate only on genuine changes") {
+    // Regression test: real-hardware profiling (top -H, one CPU core pinned near 100%) found
+    // getStatus() was calling blockAudioGate_->set_mute() unconditionally every call - the same
+    // ~1kHz-per-channel overhead pattern as adaptiveThresholdChanged() above, just on a
+    // different live GNU Radio block setter that the earlier fix missed.
+    auto block = makeBlock(-55.0, std::nullopt);
+    auto gate = gr::blocks::mute_ff::make(false);
+
+    CHECK(block->setAudioGateMuted(gate, true) == true); // first call always pushes
+    CHECK(gate->mute() == true);
+    CHECK(block->setAudioGateMuted(gate, true) == false); // same value repeatedly - no push
+    CHECK(block->setAudioGateMuted(gate, true) == false);
+    CHECK(gate->mute() == true);
+
+    CHECK(block->setAudioGateMuted(gate, false) == true); // genuinely moved
+    CHECK(gate->mute() == false);
+    CHECK(block->setAudioGateMuted(gate, false) == false); // settled at the new value
+    CHECK(gate->mute() == false);
 }

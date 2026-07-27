@@ -118,6 +118,16 @@ protected:
     // actually drive both the real audio gate and computeAndReportStatus().
     bool debounceSquelch(bool rawUnmuted);
 
+    // Same "skip the call unless the value actually changed" reasoning as
+    // adaptiveThresholdChanged(), applied to the inline audio gate: getStatus() recomputes the
+    // debounced mute decision every call (~1kHz per channel, see adaptiveThresholdChanged()'s
+    // comment), but real-hardware testing found gate->set_mute() was being called that often
+    // regardless of whether the decision actually flipped - same live-block-setter overhead,
+    // multiplied across every channel in the active window.
+    // Returns true if it actually pushed (i.e. muted differed from the last call), matching
+    // adaptiveThresholdChanged()'s return convention.
+    bool setAudioGateMuted(const gr::blocks::mute_ff::sptr& gate, bool muted);
+
     std::string channelId_;
     std::string label_;
     bool mute_;
@@ -135,6 +145,7 @@ protected:
     bool debounceStableUnmuted_ = false;
 
     std::optional<double> lastPushedAdaptiveThreshold_;
+    std::optional<bool> lastAudioGateMuted_;
 
     bool active_ = false;
     double lastActive_ = 0.0;

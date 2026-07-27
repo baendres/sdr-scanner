@@ -77,6 +77,15 @@ bool ChannelBlockBase::adaptiveThresholdChanged(double newThreshold) {
     return true;
 }
 
+bool ChannelBlockBase::setAudioGateMuted(const gr::blocks::mute_ff::sptr& gate, bool muted) {
+    if (lastAudioGateMuted_.has_value() && *lastAudioGateMuted_ == muted) {
+        return false;
+    }
+    lastAudioGateMuted_ = muted;
+    gate->set_mute(muted);
+    return true;
+}
+
 bool ChannelBlockBase::debounceSquelch(bool rawUnmuted) {
     double now = nowUnixSeconds();
     if (rawUnmuted != debounceRawUnmuted_) {
