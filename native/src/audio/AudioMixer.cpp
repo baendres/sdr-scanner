@@ -229,13 +229,22 @@ void AudioMixer::run() {
             lastStarvationReport = now;
         }
 
-        // Yield rather than sleep: this loop's pacing is what determines how promptly mixed
-        // audio gets generated and sent, so any coarseness here shows up directly as audible
-        // gaps. Under WSL2/Hyper-V, short timed sleeps can get coalesced up to the VM's
-        // timer-interrupt granularity (observed as a persistent ~100ms stall pattern that
-        // survived unrelated fixes elsewhere in the pipeline) - sched_yield() cedes the CPU
-        // without going through that timed-wait path, trading CPU usage for tighter pacing.
-        std::this_thread::yield();
+        // A real sleep here, not yield(): real-hardware per-thread CPU profiling (top -H) found
+        // this thread (identifiable by its -5 nice value, set above - nothing else in this
+        // codebase touches thread priority) pinned at ~100% of one core, unaffected by every
+        // other fix tried for the chronic AudioMixer starvation symptom (see native/README.md).
+        // yield() doesn't actually block - it just tells the scheduler "let someone else go if
+        // they want to" - and combined with this thread's elevated priority and near-continuous
+        // readiness (it's back in the run queue the instant it yields), Linux's CFS scheduler
+        // kept rescheduling it almost continuously instead of giving other threads (including
+        // the receivers' own DSP block threads) a real chance to run, on a container with 300+
+        // total threads sharing 4 cores. A genuine timed sleep actually descheules this thread
+        // for that duration. The earlier yield()-over-sleep choice was specifically about
+        // WSL2/Hyper-V's coarse timer-coalescing granularity turning short sleeps into ~100ms
+        // stalls - not a concern on bare-metal Linux (this codebase's actual deployment target),
+        // where a short sleep_for() has normal, fine-grained timing. kTargetLatencySeconds above
+        // (300ms) leaves ample margin for this tick interval.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     for (auto& o : outputs_) o->close();

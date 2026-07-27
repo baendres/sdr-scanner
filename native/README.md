@@ -344,6 +344,35 @@ than a single fixed threshold tolerates well:
   arrive in chunks larger than the assumed margin allows for). Widened to 300ms, with
   `kMixerBufferTargetLen` (the backlog-trim cap) widened alongside it to 500ms so it doesn't
   fight the wider margin by trimming away the exact slack just added.
+
+  That fix *still* didn't move the numbers, which meant the earlier per-thread CPU profiling
+  (the one pinned core, back in the `adaptiveThresholdChanged()`/`setAudioGateMuted()`
+  investigation above) needed a second, harder look - the assumption that the pinned thread was
+  `SoapyReceiver::run()`'s polling loop was never actually proven, just plausible at the time,
+  and widening that loop 10x with zero effect on either CPU or starvation is real evidence
+  against it. A fresh `top -H` capture settled it by looking at the pinned thread's PR/NI
+  columns instead of just its name: `NI -5` is a direct match for `AudioMixer::run()`'s own
+  `setpriority(PRIO_PROCESS, gettid(), -5)` call - nowhere else in this codebase touches thread
+  priority. The pinned thread was `AudioMixer` itself, the whole time, unaffected by any of the
+  five receiver-side fixes above because none of them touch it.
+
+  Its loop ended each iteration with `std::this_thread::yield()`, not a real sleep - a
+  deliberate choice (see the code comment removed by this fix) to avoid WSL2/Hyper-V's coarse
+  timer-coalescing turning short sleeps into ~100ms stalls, a real problem in a different
+  deployment context but not scanner2's actual bare-metal Linux. `yield()` doesn't block; it
+  just tells the scheduler "let someone else go if they want to," and combined with this
+  thread's elevated priority and near-continuous readiness (it's back in the run queue the
+  instant it yields), Linux's CFS scheduler kept rescheduling it almost continuously instead of
+  giving other threads - including the receivers' own DSP block threads - a real chance to run,
+  on a container with 300+ total threads sharing 4 cores. That's a busy-spin, not a wait,
+  regardless of how little actual computation the loop body does per iteration (the assumption
+  the elevated-priority design leaned on). Two standalone GNU Radio test programs confirmed
+  `mute_ff` and `pwr_squelch_cc` (`gate=false`) both behave correctly under this hypothesis too
+  - continuous zero-filled output, no dropped samples when muted/squelched - ruling those out as
+  contributing to the "starved" (buffer genuinely empty, not just muted) symptom before landing
+  on the scheduling explanation. Replaced with a real `sleep_for(1ms)`, well within the now-300ms
+  latency margin above, which actually deschedules the thread for that duration instead of
+  immediately re-queuing it.
 - **Squelch debounce** - `ChannelBlockBase::debounceSquelch()` requires the raw (power/CTCSS)
   squelch-open decision to persist for `SQUELCH_DEBOUNCE_SECONDS` (50ms, `Const.h`) before it's
   treated as a genuine transition, filtering brief noise spikes that would otherwise pop the
