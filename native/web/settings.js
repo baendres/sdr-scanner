@@ -48,6 +48,12 @@ function renderChannelRow(cc) {
     placeholder: "off",
     title: "When set, overrides Squelch: threshold tracks the live noise floor plus this margin",
   });
+  const noiseSquelch = el("input", {
+    type: "number", step: "1",
+    value: cc.noiseSquelchThreshold_dB != null ? cc.noiseSquelchThreshold_dB : "",
+    placeholder: "off",
+    title: "FM/NFM only: also requires the demodulated hiss above 4-7kHz to drop below this level to unmute",
+  });
   const ctcss = el("input", { type: "number", step: "0.1", value: cc.ctcssToneHz != null ? cc.ctcssToneHz : "", placeholder: "off" });
   const gain = el("input", { type: "number", step: "1", value: cc.audioGain_dB });
   const dwell = el("input", { type: "number", step: "0.5", value: cc.dwellTime_s });
@@ -63,6 +69,7 @@ function renderChannelRow(cc) {
         mode: mode.value,
         squelchThreshold: parseFloat(squelch.value),
         squelchNoiseMargin_dB: squelchMargin.value === "" ? null : parseFloat(squelchMargin.value),
+        noiseSquelchThreshold_dB: noiseSquelch.value === "" ? null : parseFloat(noiseSquelch.value),
         ctcssToneHz: ctcss.value === "" ? null : parseFloat(ctcss.value),
         audioGain_dB: parseFloat(gain.value),
         dwellTime_s: parseFloat(dwell.value),
@@ -89,6 +96,7 @@ function renderChannelRow(cc) {
     el("td", {}, [mode]),
     el("td", {}, [squelch]),
     el("td", {}, [squelchMargin]),
+    el("td", {}, [noiseSquelch]),
     el("td", {}, [ctcss]),
     el("td", {}, [gain]),
     el("td", {}, [dwell]),
@@ -102,6 +110,7 @@ async function addChannel() {
   if (!freqStr) { log("add channel failed: frequency is required"); return; }
   const ctcssStr = document.getElementById("newChCtcss").value;
   const squelchMarginStr = document.getElementById("newChSquelchMargin").value;
+  const noiseSquelchStr = document.getElementById("newChNoiseSquelch").value;
   try {
     await api("POST", "/api/channels", {
       label: document.getElementById("newChLabel").value || undefined,
@@ -109,6 +118,7 @@ async function addChannel() {
       mode: document.getElementById("newChMode").value,
       squelchThreshold: parseFloat(document.getElementById("newChSquelch").value),
       squelchNoiseMargin_dB: squelchMarginStr === "" ? null : parseFloat(squelchMarginStr),
+      noiseSquelchThreshold_dB: noiseSquelchStr === "" ? null : parseFloat(noiseSquelchStr),
       ctcssToneHz: ctcssStr === "" ? null : parseFloat(ctcssStr),
       audioGain_dB: parseFloat(document.getElementById("newChGain").value),
       dwellTime_s: parseFloat(document.getElementById("newChDwell").value),
@@ -116,6 +126,7 @@ async function addChannel() {
     document.getElementById("newChLabel").value = "";
     document.getElementById("newChFreq").value = "";
     document.getElementById("newChSquelchMargin").value = "";
+    document.getElementById("newChNoiseSquelch").value = "";
     document.getElementById("newChCtcss").value = "";
     log("added channel");
     await loadAll();

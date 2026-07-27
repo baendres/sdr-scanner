@@ -7,6 +7,7 @@
 #include <gnuradio/filter/iir_filter_ffd.h>
 #include <gnuradio/filter/fir_filter_blk.h>
 #include <gnuradio/blocks/multiply_const.h>
+#include <gnuradio/blocks/multiply.h>
 #include <gnuradio/blocks/complex_to_mag_squared.h>
 #include <gnuradio/filter/single_pole_iir_filter_ff.h>
 #include <gnuradio/blocks/keep_one_in_n.h>
@@ -25,10 +26,9 @@ namespace sdrscan {
 // higher internal "quad rate" (fmQuadRate_) and the audio filter decimates back down to
 // audioSampleRate - narrowband channels are unaffected (fmQuadRate_ == audioSampleRate_ there).
 //
-// Simplification vs. the Python version: always uses a single-stage
-// freq_xlating_fir_filter_ccf for input channelization instead of the Python code's optional
-// two-stage FFT-filter split for very high decimation ratios. That was a CPU optimization for
-// extreme decimation, not a correctness requirement; revisit if profiling shows it's needed.
+// Input channelization uses a two-stage decimation split (see native/README.md's "two-stage
+// channelization" note) rather than a single sharp filter at the full RF rate, for real-time
+// compute reasons - falls back to a single stage at low decimation ratios.
 class ChannelBlockFM : public ChannelBlockBase {
 public:
     ChannelBlockFM(const std::string& channelId,
@@ -46,6 +46,7 @@ public:
                    int deviation_hz,
                    std::optional<double> ctcssToneHz,
                    std::optional<double> squelchNoiseMargin_dB,
+                   std::optional<double> noiseSquelchThreshold_dB,
                    std::function<void(ChannelStatusUpdate)> statusCallback);
 
     void setForceActive(bool forceActive) override;
@@ -53,7 +54,13 @@ public:
     void setSquelchNoiseMargin(std::optional<double> marginDb) override;
     void setAudioGain(double audioGain_dB) override;
     void setCtcssTone(std::optional<double> toneHz) override;
+    void setNoiseSquelchThreshold(std::optional<double> thresholdDb) override;
     ChannelStatus getStatus() override;
+
+    // Latest reference-band ("hiss") level, in dBFS - exposed for tests to verify the
+    // measurement itself discriminates clean signal from broadband noise, independent of
+    // whatever threshold a particular test picks.
+    float noiseRefLevel() const { return noiseRefLevel_dBFS_; }
 
     // Pushes the current adaptive-squelch threshold (if configured) to blockPowerSquelch_,
     // without touching CTCSS/debounce/the audio gate or reporting status - just the threshold
@@ -80,6 +87,12 @@ private:
     int fmQuadRate_;
     int rfSampleRate_;
     std::optional<double> ctcssToneHz_;
+    std::optional<double> noiseSquelchThreshold_dB_;
+    // Latest reference-band ("hiss") power reading, in dBFS - written from the flowgraph's own
+    // worker thread (via blockNoiseRef_'s callback, same pattern as ChannelBlockBase::
+    // updateRSSI()), read from getStatus() on the control-plane thread. See the noise squelch
+    // chain construction comment for the discrimination logic this feeds.
+    float noiseRefLevel_dBFS_ = 0.0f;
 
     gr::filter::freq_xlating_fir_filter_ccf::sptr blockFreqXlatingFilter_;
     // Second channelization stage - only present when splitDecimation() found a worthwhile
@@ -104,6 +117,15 @@ private:
     gr::filter::single_pole_iir_filter_ff::sptr blockRssiLowPass_;
     gr::blocks::keep_one_in_n::sptr blockRssiDecimate_;
     std::shared_ptr<Mag2ToPowerBlock> blockRssi_;
+
+    // Noise squelch (see native/README.md's "FM noise squelch" note): a reference-band
+    // bandpass tapping the raw quad-demod output (before de-emphasis, which would otherwise
+    // roll off exactly the high-frequency hiss this measures), squared and lowpass-averaged
+    // the same way the RSSI chain measures RF power, just on real (not complex) audio.
+    gr::filter::fir_filter_fff::sptr blockNoiseRefFilter_;
+    gr::blocks::multiply_ff::sptr blockNoiseRefSquare_; // same input on both ports -> squares it
+    gr::filter::single_pole_iir_filter_ff::sptr blockNoiseRefLowPass_;
+    std::shared_ptr<Mag2ToPowerBlock> blockNoiseRef_;
 };
 
 } // namespace sdrscan

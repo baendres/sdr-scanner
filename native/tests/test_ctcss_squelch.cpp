@@ -56,7 +56,8 @@ ChannelStatus runTrial(double embeddedCtcssToneHz, std::optional<double> require
         "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*squelchThreshold=*/-40.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
         /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, kRfSampleRate, kAudioSampleRate,
-        kDeviationHz, requiredToneHz, /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
+        kDeviationHz, requiredToneHz, /*squelchNoiseMargin_dB=*/std::nullopt,
+        /*noiseSquelchThreshold_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
 
     tb->connect(voiceTone, 0, adder, 0);
     tb->connect(ctcssTone, 0, adder, 1);
@@ -99,7 +100,8 @@ TEST_CASE("setCtcssTone changes the required tone live") {
     auto channel = gnuradio::make_block_sptr<ChannelBlockFM>(
         "test-channel", "Test", false, std::nullopt, false, -40.0, 0.0, 3.0, 0, 0,
         kRfSampleRate, kAudioSampleRate, kDeviationHz, /*ctcssToneHz=*/151.4 /* mismatched */,
-        /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
+        /*squelchNoiseMargin_dB=*/std::nullopt, /*noiseSquelchThreshold_dB=*/std::nullopt,
+        [](ChannelStatusUpdate) {});
 
     // Live-update to the matching tone before running - this is exactly the "hot update"
     // path the control API uses (see native/README.md).

@@ -27,6 +27,7 @@ TEST_CASE("Database persists channel config across reopen") {
     cc.squelchThreshold = -62.5;
     cc.ctcssToneHz = 100.0;
     cc.squelchNoiseMargin_dB = 8.0;
+    cc.noiseSquelchThreshold_dB = 12.0;
     cc.dwellTime_s = 4.5;
     cc.audioGain_dB = 3.0;
     cc.mute = true;
@@ -56,6 +57,8 @@ TEST_CASE("Database persists channel config across reopen") {
         CHECK(*loaded.ctcssToneHz == cc.ctcssToneHz);
         REQUIRE(loaded.squelchNoiseMargin_dB.has_value());
         CHECK(*loaded.squelchNoiseMargin_dB == cc.squelchNoiseMargin_dB);
+        REQUIRE(loaded.noiseSquelchThreshold_dB.has_value());
+        CHECK(*loaded.noiseSquelchThreshold_dB == cc.noiseSquelchThreshold_dB);
         CHECK(loaded.dwellTime_s == cc.dwellTime_s);
         CHECK(loaded.mute == true);
         REQUIRE(loaded.solo.has_value());
@@ -127,6 +130,50 @@ TEST_CASE("Database migrates an existing channels table that predates squelch_no
     channels = db.listChannels();
     REQUIRE(channels[0].squelchNoiseMargin_dB.has_value());
     CHECK(*channels[0].squelchNoiseMargin_dB == 5.0);
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
+}
+
+TEST_CASE("Database migrates an existing channels table that predates noise_squelch_threshold_db") {
+    // Same situation as the squelch_noise_margin_db migration test above, for the newer
+    // noise_squelch_threshold_db column - a database created before this column existed needs
+    // the explicit ALTER TABLE path, not just CREATE TABLE IF NOT EXISTS.
+    std::string path = tempDbPath();
+    {
+        sqlite3* raw = nullptr;
+        REQUIRE(sqlite3_open(path.c_str(), &raw) == SQLITE_OK);
+        const char* oldSchema = R"SQL(
+            CREATE TABLE channels (
+                id TEXT PRIMARY KEY, freq_hz INTEGER NOT NULL, label TEXT,
+                mode TEXT NOT NULL DEFAULT 'FM', audio_gain_db REAL NOT NULL DEFAULT 0,
+                dwell_time_s REAL NOT NULL DEFAULT 3.0, squelch_threshold REAL NOT NULL DEFAULT -55,
+                ctcss_tone_hz REAL, squelch_noise_margin_db REAL,
+                enabled INTEGER NOT NULL DEFAULT 1, disable_until REAL,
+                mute INTEGER NOT NULL DEFAULT 0, solo INTEGER, hold INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO channels(id, freq_hz, label) VALUES ('pre-existing', 462562500, 'Old Row');
+        )SQL";
+        REQUIRE(sqlite3_exec(raw, oldSchema, nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(raw);
+    }
+
+    Database db(path);
+    db.initSchema();
+
+    auto channels = db.listChannels();
+    REQUIRE(channels.size() == 1);
+    CHECK(channels[0].id == "pre-existing");
+    CHECK_FALSE(channels[0].noiseSquelchThreshold_dB.has_value());
+
+    ChannelConfig cc = channels[0];
+    cc.noiseSquelchThreshold_dB = 15.0;
+    db.upsertChannel(cc);
+    channels = db.listChannels();
+    REQUIRE(channels[0].noiseSquelchThreshold_dB.has_value());
+    CHECK(*channels[0].noiseSquelchThreshold_dB == 15.0);
 
     std::filesystem::remove(path);
     std::filesystem::remove(path + "-wal");

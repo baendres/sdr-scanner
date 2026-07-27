@@ -68,6 +68,7 @@ public:
     void setChannelSquelch(const std::string& channelId, double squelchThreshold);
     void setChannelCtcssTone(const std::string& channelId, std::optional<double> toneHz);
     void setChannelSquelchNoiseMargin(const std::string& channelId, std::optional<double> marginDb);
+    void setChannelNoiseSquelchThreshold(const std::string& channelId, std::optional<double> thresholdDb);
     void setChannelAudioGain(const std::string& channelId, double audioGain_dB);
     void setChannelDwellTime(const std::string& channelId, double dwellTime_s);
     void setChannelMute(const std::string& channelId, bool mute);

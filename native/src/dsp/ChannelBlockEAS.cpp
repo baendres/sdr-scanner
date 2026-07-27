@@ -41,7 +41,7 @@ ChannelBlockEAS::ChannelBlockEAS(const std::string& channelId,
         channelId, label, /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         squelchThreshold, audioGain_dB, dwellTime_s, channelFreq_hz, hardwareFreq_hz,
         rfSampleRate, audioSampleRate, deviation_hz, /*ctcssToneHz=*/std::nullopt,
-        squelchNoiseMargin_dB, [](ChannelStatusUpdate) {});
+        squelchNoiseMargin_dB, /*noiseSquelchThreshold_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
 
     blockStreamToVector_ = gr::blocks::stream_to_vector::make(sizeof(float), kFftSize);
     blockToneDetect_ = gnuradio::make_block_sptr<EasToneDetectBlock>(

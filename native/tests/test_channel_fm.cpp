@@ -71,7 +71,8 @@ ChannelStatus runTrial(float carrierAmplitude, double squelchThreshold_dB, std::
         "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         squelchThreshold_dB, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
         /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
-        /*deviation_hz=*/2500, ctcssToneHz, /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
+        /*deviation_hz=*/2500, ctcssToneHz, /*squelchNoiseMargin_dB=*/std::nullopt,
+        /*noiseSquelchThreshold_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
 
     tb->connect(carrier, 0, add, 0);
     tb->connect(noise, 0, add, 1);
@@ -105,7 +106,8 @@ TEST_CASE("ChannelBlockFM forceActive opens squelch regardless of signal strengt
 
     auto channel = gnuradio::make_block_sptr<ChannelBlockFM>(
         "test-channel", "Test", false, std::nullopt, false, -20.0, 0.0, 3.0, 0, 0,
-        rfSampleRate, audioSampleRate, 2500, std::nullopt, std::nullopt, [](ChannelStatusUpdate) {});
+        rfSampleRate, audioSampleRate, 2500, std::nullopt, std::nullopt, std::nullopt,
+        [](ChannelStatusUpdate) {});
     channel->setForceActive(true);
 
     tb->connect(carrier, 0, head, 0);
@@ -138,7 +140,8 @@ TEST_CASE("ChannelBlockFM passes real audio through when CTCSS is not configured
         "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*squelchThreshold_dB=*/-20.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
         /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
-        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
+        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/std::nullopt,
+        /*noiseSquelchThreshold_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
 
     tb->connect(carrier, 0, add, 0);
     tb->connect(noise, 0, add, 1);
@@ -173,7 +176,8 @@ TEST_CASE("Adaptive squelch opens based on the live noise floor plus margin, not
         "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*squelchThreshold_dB=*/100.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
         /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
-        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/6.0, [](ChannelStatusUpdate) {});
+        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/6.0,
+        /*noiseSquelchThreshold_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
 
     // Phase 1: a weak tone standing in for the band's quiet noise floor (~-60 dBFS). Long enough
     // to seed noiseFloor_dBFS_ from at least one RSSI update (needs >= 4000 fmQuadRate_ samples,
@@ -222,11 +226,85 @@ TEST_CASE("Without adaptive squelch configured, the same moderate signal stays s
         "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*squelchThreshold_dB=*/100.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
         /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
-        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
+        /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/std::nullopt,
+        /*noiseSquelchThreshold_dB=*/std::nullopt, [](ChannelStatusUpdate) {});
 
     tb->connect(source, 0, channel, 0);
     tb->connect(channel, 0, sink, 0);
     tb->run();
 
     CHECK(settledStatus(channel) == ChannelStatus::IDLE);
+}
+
+TEST_CASE("Noise squelch rejects broadband noise that clears power squelch but has no real capture") {
+    // Regression test for the "squelch pops" investigation (see native/README.md's "FM noise
+    // squelch" note): a real-hardware audio capture showed brief broadband noise bursts that
+    // legitimately persisted long enough to clear both the power squelch and debounce, since
+    // duration/power alone can't distinguish a genuine short transmission from a noise impulse
+    // that happens to last just as long. Noise squelch adds a second, independent test - FM's
+    // capture effect suppresses high-frequency ("hiss") content once a real signal captures the
+    // receiver; broadband noise doesn't, regardless of duration.
+    constexpr int rfSampleRate = 240'000;
+    constexpr int audioSampleRate = 16'000;
+
+    auto makeChannel = [&](std::optional<double> noiseSquelchThreshold_dB) {
+        return gnuradio::make_block_sptr<ChannelBlockFM>(
+            "test-channel", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
+            /*squelchThreshold_dB=*/-80.0, /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0,
+            /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0, rfSampleRate, audioSampleRate,
+            /*deviation_hz=*/2500, /*ctcssToneHz=*/std::nullopt, /*squelchNoiseMargin_dB=*/std::nullopt,
+            noiseSquelchThreshold_dB, [](ChannelStatusUpdate) {});
+    };
+
+    auto runClean = [&](const std::shared_ptr<ChannelBlockFM>& channel) {
+        // A strong, clean, unmodulated carrier - constant instantaneous frequency, so quad-demod
+        // output is essentially DC with no high-frequency ("hiss") content at all.
+        auto signal = makeToneSegment(1000.0, 0.1f, 0.3, rfSampleRate);
+        auto tb = gr::make_top_block("test-noise-squelch-clean");
+        auto source = gr::blocks::vector_source_c::make(signal, false);
+        auto sink = gr::blocks::null_sink::make(sizeof(float));
+        tb->connect(source, 0, channel, 0);
+        tb->connect(channel, 0, sink, 0);
+        tb->run();
+    };
+    auto runNoisy = [&](const std::shared_ptr<ChannelBlockFM>& channel) {
+        // Broadband noise at a power level well above squelchThreshold_dB above - "loud" by
+        // the power squelch's own measure, but no real signal captured, so FM demod of it is
+        // itself broadband noise (the well-known "FM demodulated noise" characteristic that
+        // noise squelch exploits).
+        auto noise = gr::analog::noise_source_c::make(gr::analog::GR_GAUSSIAN, 0.1, 42);
+        auto head = gr::blocks::head::make(sizeof(gr_complex), static_cast<int>(rfSampleRate * 0.3));
+        auto tb = gr::make_top_block("test-noise-squelch-noisy");
+        auto sink = gr::blocks::null_sink::make(sizeof(float));
+        tb->connect(noise, 0, head, 0);
+        tb->connect(head, 0, channel, 0);
+        tb->connect(channel, 0, sink, 0);
+        tb->run();
+    };
+
+    // Probe both scenarios' raw reference-band levels first (noise squelch not configured, so
+    // this doesn't affect gating) - avoids hardcoding an exact dB threshold that would be
+    // fragile to firdes/GNU Radio version-specific gain details.
+    auto probeClean = makeChannel(std::nullopt);
+    runClean(probeClean);
+    probeClean->getStatus(); // lets the reference-band callback populate noiseRefLevel()
+    float cleanLevel = probeClean->noiseRefLevel();
+
+    auto probeNoisy = makeChannel(std::nullopt);
+    runNoisy(probeNoisy);
+    probeNoisy->getStatus();
+    float noisyLevel = probeNoisy->noiseRefLevel();
+
+    REQUIRE(noisyLevel > cleanLevel + 6.0); // meaningfully noisier, not just measurement jitter
+    double threshold = (cleanLevel + noisyLevel) / 2.0;
+
+    // With a threshold sitting between the two measured levels, the clean "signal" should open
+    // as normal, but the noise burst should stay squelched despite clearing the power threshold.
+    auto cleanChannel = makeChannel(threshold);
+    runClean(cleanChannel);
+    CHECK(settledStatus(cleanChannel) == ChannelStatus::ACTIVE);
+
+    auto noisyChannel = makeChannel(threshold);
+    runNoisy(noisyChannel);
+    CHECK(settledStatus(noisyChannel) == ChannelStatus::IDLE);
 }

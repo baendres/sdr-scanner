@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS channels (
     squelch_threshold REAL NOT NULL DEFAULT -55,
     ctcss_tone_hz     REAL,                          -- NULL = disabled (power-squelch only)
     squelch_noise_margin_db REAL,                    -- NULL = fixed squelch_threshold; set = adaptive (noise floor + margin)
+    noise_squelch_threshold_db REAL,                 -- NULL = disabled; set = FM-only reference-band ("hiss") gate
     enabled           INTEGER NOT NULL DEFAULT 1,
     disable_until     REAL,
     mute              INTEGER NOT NULL DEFAULT 0,

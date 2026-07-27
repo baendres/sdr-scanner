@@ -70,6 +70,10 @@ public:
     // scheme - AM/SSB/etc channel blocks don't have a meaningful implementation).
     virtual void setCtcssTone(std::optional<double> /*toneHz*/) {}
 
+    // FM noise squelch: no-op by default; only ChannelBlockFM implements it (FM's capture
+    // effect - AM has no equivalent). See ChannelBlockFM's header note.
+    virtual void setNoiseSquelchThreshold(std::optional<double> /*thresholdDb*/) {}
+
     // Adaptive ("noise-relative") squelch: when set, the channel's effective squelch threshold
     // tracks the live noise floor estimate (noiseFloor_dBFS_) plus this margin instead of a
     // fixed absolute squelchThreshold_ - keeps squelch correctly calibrated as band conditions

@@ -49,12 +49,14 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
                                 int deviation_hz,
                                 std::optional<double> ctcssToneHz,
                                 std::optional<double> squelchNoiseMargin_dB,
+                                std::optional<double> noiseSquelchThreshold_dB,
                                 std::function<void(ChannelStatusUpdate)> statusCallback)
     : ChannelBlockBase(channelId, label, mute, solo, hold, squelchThreshold, audioGain_dB,
                         dwellTime_s, audioSampleRate, squelchNoiseMargin_dB, std::move(statusCallback)),
       deviation_hz_(deviation_hz),
       rfSampleRate_(rfSampleRate),
-      ctcssToneHz_(ctcssToneHz) {
+      ctcssToneHz_(ctcssToneHz),
+      noiseSquelchThreshold_dB_(noiseSquelchThreshold_dB) {
 
     fmQuadRate_ = audioSampleRate_;
     if (deviation_hz_ > audioSampleRate_) {
@@ -167,6 +169,19 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     blockRssi_ = std::make_shared<Mag2ToPowerBlock>([this](float dBFS) { updateRSSI(dBFS); });
 
     ///
+    // Noise squelch (see native/README.md's "FM noise squelch" note) - measures reference-band
+    // ("hiss") power the same way the RSSI chain measures RF power, just on real demodulated
+    // audio instead of complex RF, and tapped before de-emphasis (which would otherwise roll
+    // off exactly the high-frequency content this needs). 4-7kHz sits comfortably above the
+    // 200-3500Hz voice band (blockAudioFilter_ below) and comfortably under fmQuadRate_/2 (at
+    // minimum 8kHz, since fmQuadRate_ is always >= audioSampleRate_, 16kHz).
+    blockNoiseRefFilter_ = gr::filter::fir_filter_fff::make(
+        1, gr::filter::firdes::band_pass(1, fmQuadRate_, 4000, 7000, 500));
+    blockNoiseRefSquare_ = gr::blocks::multiply_ff::make();
+    blockNoiseRefLowPass_ = gr::filter::single_pole_iir_filter_ff::make(1.0 / (fmQuadRate_ * RSSI_LOWPASS_TC), 1);
+    blockNoiseRef_ = std::make_shared<Mag2ToPowerBlock>([this](float dBFS) { noiseRefLevel_dBFS_ = dBFS; });
+
+    ///
     // Connections - RF chain
 
     connect(self(), 0, blockFreqXlatingFilter_, 0);
@@ -195,6 +210,14 @@ ChannelBlockFM::ChannelBlockFM(const std::string& channelId,
     connect(blockRssiComplexToMag2_, 0, blockRssiLowPass_, 0);
     connect(blockRssiLowPass_, 0, blockRssiDecimate_, 0);
     connect(blockRssiDecimate_, 0, blockRssi_, 0);
+
+    // Noise squelch chain - taps blockQuadDemod_ directly (pre-de-emphasis), a side tap same
+    // as blockCtcssSquelch_ above, not part of the real audio path.
+    connect(blockQuadDemod_, 0, blockNoiseRefFilter_, 0);
+    connect(blockNoiseRefFilter_, 0, blockNoiseRefSquare_, 0);
+    connect(blockNoiseRefFilter_, 0, blockNoiseRefSquare_, 1);
+    connect(blockNoiseRefSquare_, 0, blockNoiseRefLowPass_, 0);
+    connect(blockNoiseRefLowPass_, 0, blockNoiseRef_, 0);
 
     // Volume
     connectVolume(blockAudioGain_, 0);
@@ -247,6 +270,10 @@ void ChannelBlockFM::setCtcssTone(std::optional<double> toneHz) {
     applyCtcssLevel();
 }
 
+void ChannelBlockFM::setNoiseSquelchThreshold(std::optional<double> thresholdDb) {
+    noiseSquelchThreshold_dB_ = thresholdDb;
+}
+
 void ChannelBlockFM::refreshAdaptiveSquelchThreshold() {
     // Deliberately not called from updateRSSI() (which runs on the flowgraph's own worker
     // thread) - every other hot-update setter in this codebase is only ever called from
@@ -266,7 +293,14 @@ ChannelStatus ChannelBlockFM::getStatus() {
     // CTCSS only gates when actually configured (and never overrides forceActive) - see the
     // note in applyCtcssLevel() for why we don't rely on level==0 to mean "always passes".
     bool ctcssOk = forceActive_ || !ctcssToneHz_.has_value() || blockCtcssSquelch_->unmuted();
-    bool rawUnmuted = blockPowerSquelch_->unmuted() && ctcssOk;
+    // Noise squelch only gates when configured (and never overrides forceActive) - see the
+    // class-level note and the noise squelch chain construction comment. A real captured
+    // signal reads a LOW reference-band level (FM's capture effect suppresses hiss); broadband
+    // noise doesn't, regardless of how long it persists - this is what rejects the noise
+    // impulses that are long enough to otherwise pass both the power squelch and debounce.
+    bool noiseOk = forceActive_ || !noiseSquelchThreshold_dB_.has_value()
+                    || noiseRefLevel_dBFS_ < *noiseSquelchThreshold_dB_;
+    bool rawUnmuted = blockPowerSquelch_->unmuted() && ctcssOk && noiseOk;
     // Debounce filters brief noise spikes from opening/closing the channel on their own (see
     // SQUELCH_DEBOUNCE_SECONDS) - this is what actually drives real audio (blockAudioGate_,
     // polled roughly every ms from the receiver's scheduling loop) as well as the reported

@@ -69,6 +69,14 @@ struct ChannelConfig {
     // effective threshold instead tracks its live noise floor estimate plus this margin. Unset
     // = today's fixed-threshold behavior. See ChannelBlockBase::effectiveSquelchThreshold().
     std::optional<double> squelchNoiseMargin_dB;
+    // FM noise squelch: when set, the channel also requires a reference-band (above voice,
+    // where FM's capture effect suppresses hiss once a real signal captures the receiver)
+    // power level below this threshold before it's considered open - rejects broadband noise
+    // impulses that pass the power squelch and persist long enough to clear debounce, which
+    // pure duration-based squelch can't distinguish from a real short transmission. FM/NFM
+    // only (no capture effect on AM); unset = today's power-squelch-only behavior. See
+    // ChannelBlockFM's noise squelch chain.
+    std::optional<double> noiseSquelchThreshold_dB;
 
     bool enabled = true;
     std::optional<double> disableUntil; // unix time

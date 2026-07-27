@@ -425,6 +425,51 @@ than a single fixed threshold tolerates well:
   production; a `forceActive` operator override bypasses it entirely (an explicit "make this
   audible now" action shouldn't wait out a squelch hang time).
 
+### FM noise squelch (reference-band hiss discriminator)
+
+Real-hardware use surfaced a distinct problem from the debounce case above: audible "pops" -
+short bursts of noise that reach the speaker even though nothing was actually transmitting. These
+showed up on several FM/NFM channels with adaptive squelch margins anywhere from 6-19dB, and
+happened while a receiver was parked on a channel, not just during a scan-window hop. A recording
+of one such pop, captured and analyzed (windowed RMS envelope + a DFT of the ~2000-sample burst,
+both done without any DSP library, just Python's stdlib `wave`/`audioop`/`cmath`), showed the pop
+was a genuinely broadband noise burst - not a single spurious tone (which would have pointed at a
+filter-design regression) - that happened to clear the power/adaptive squelch threshold and
+persist past `SQUELCH_DEBOUNCE_SECONDS`. That's the crux of the problem: debounce alone can't
+distinguish a real short transmission from a noise burst of similar duration, because duration is
+the only thing it looks at.
+
+FM has a discriminator that power/duration-based squelch doesn't use at all: the *capture effect*.
+An FM demodulator's output on pure noise (no carrier captured) has a characteristic noise
+spectrum that rises with frequency ("triangular" hiss, strongest in the last few kHz below the
+audio filter's cutoff); a demodulator that has captured a real signal suppresses that hiss,
+regardless of how weak or strong the underlying carrier is, because FM discriminators are
+inherently more sensitive to the strongest instantaneous signal present. AM has no equivalent
+effect, so this is FM/NFM-only, matching `analog::ctcss_squelch_ff`'s FM-only positioning above.
+
+Implementation, in `ChannelBlockFM`:
+- A reference band-pass filter (`blockNoiseRefFilter_`, ~4-7kHz) taps the same pre-deemphasis
+  quadrature-demodulator output the audio chain uses, in parallel with it - it doesn't sit inline,
+  so it can't add latency or artifacts to the audio path itself.
+- That band's power is measured the same cheap way the RSSI chain measures RF power, but for a
+  real (not complex) signal: self-multiplying the signal against itself via `gr::blocks::multiply`
+  wired to the *same* source on both input ports computes x² without needing a separate squaring
+  block, then a low-pass average (`blockNoiseRefLowPass_`) and a `Mag2ToPowerBlock` callback yield
+  a live `noiseRefLevel_dBFS_` reading, mirroring the existing RSSI/noise-floor telemetry.
+- `getStatus()`'s unmuted decision becomes a three-way AND: power/adaptive squelch (RF chain) AND
+  CTCSS (if configured) AND `noiseRefLevel_dBFS_ <= noiseSquelchThreshold_dB` (if configured) - a
+  channel with no `noiseSquelchThreshold_dB` set behaves exactly as before (opt-in, no change to
+  existing channels).
+- Deliberately independent of `squelchThreshold`/`squelchNoiseMargin_dB`: it's measuring the
+  *shape* of the demodulated noise, not its level, so it can catch a broadband burst that's loud
+  enough to already be above the power squelch (which is exactly the pops case above) without
+  needing the power squelch tightened - tightening the power squelch instead would delay picking
+  up real weak signals, which the user explicitly did not want traded away.
+- Configured per-channel via `noiseSquelchThreshold_dB` (nullable `REAL` column, `PATCH
+  /api/channels/{id}` and the `ChannelSetNoiseSquelchThreshold` WS message), same optional/nullable
+  pattern as `ctcssToneHz` and `squelchNoiseMargin_dB`. Web UI: a "Noise Squelch (dB)" field next
+  to CTCSS on both the main control page and the channel-settings table.
+
 ### NOAA / BFM_EAS (attention-tone) channel modes
 
 `ChannelBlockEAS` wraps an internal `ChannelBlockFM` (the demod + RF power squelch) and taps

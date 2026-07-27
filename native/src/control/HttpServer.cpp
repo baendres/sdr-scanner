@@ -301,6 +301,10 @@ void HttpServer::applyChannelPatchFields(const std::string& channelId, const jso
         auto v = body.at("squelchNoiseMargin_dB");
         scanner_.setChannelSquelchNoiseMargin(channelId, v.is_null() ? std::nullopt : std::optional<double>(v.get<double>()));
     }
+    if (body.contains("noiseSquelchThreshold_dB")) {
+        auto v = body.at("noiseSquelchThreshold_dB");
+        scanner_.setChannelNoiseSquelchThreshold(channelId, v.is_null() ? std::nullopt : std::optional<double>(v.get<double>()));
+    }
     if (body.contains("audioGain_dB")) scanner_.setChannelAudioGain(channelId, body.at("audioGain_dB").get<double>());
     if (body.contains("dwellTime_s")) scanner_.setChannelDwellTime(channelId, body.at("dwellTime_s").get<double>());
     if (body.contains("mute")) scanner_.setChannelMute(channelId, body.at("mute").get<bool>());
@@ -400,6 +404,9 @@ void HttpServer::handleWsMessage(const std::shared_ptr<WsClient>& client, const 
         } else if (type == "ChannelSetSquelchNoiseMargin") {
             auto v = data.at("squelchNoiseMargin_dB");
             scanner_.setChannelSquelchNoiseMargin(data.at("id").get<std::string>(), v.is_null() ? std::nullopt : std::optional<double>(v.get<double>()));
+        } else if (type == "ChannelSetNoiseSquelchThreshold") {
+            auto v = data.at("noiseSquelchThreshold_dB");
+            scanner_.setChannelNoiseSquelchThreshold(data.at("id").get<std::string>(), v.is_null() ? std::nullopt : std::optional<double>(v.get<double>()));
         } else if (type == "ChannelSetAudioGain") {
             scanner_.setChannelAudioGain(data.at("id").get<std::string>(), data.at("audioGain_dB").get<double>());
         } else if (type == "ChannelSetDwellTime") {

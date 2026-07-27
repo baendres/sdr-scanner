@@ -156,6 +156,13 @@ void Scanner::setChannelSquelchNoiseMargin(const std::string& channelId, std::op
         [](ChannelBlockBase& block, const ChannelConfig& cc) { block.setSquelchNoiseMargin(cc.squelchNoiseMargin_dB); });
 }
 
+void Scanner::setChannelNoiseSquelchThreshold(const std::string& channelId, std::optional<double> thresholdDb) {
+    updateChannel(
+        channelId,
+        [&](ChannelConfig& cc) { cc.noiseSquelchThreshold_dB = thresholdDb; },
+        [](ChannelBlockBase& block, const ChannelConfig& cc) { block.setNoiseSquelchThreshold(cc.noiseSquelchThreshold_dB); });
+}
+
 void Scanner::setChannelAudioGain(const std::string& channelId, double audioGain_dB) {
     updateChannel(
         channelId,

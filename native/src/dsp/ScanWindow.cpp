@@ -28,7 +28,8 @@ std::shared_ptr<ChannelBlockBase> buildChannelBlock(const ChannelConfig& cc,
             block = gnuradio::make_block_sptr<ChannelBlockFM>(
                 cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.squelchThreshold, cc.audioGain_dB,
                 cc.dwellTime_s, cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate,
-                deviation_hz, cc.ctcssToneHz, cc.squelchNoiseMargin_dB, statusCallback);
+                deviation_hz, cc.ctcssToneHz, cc.squelchNoiseMargin_dB,
+                cc.noiseSquelchThreshold_dB, statusCallback);
             break;
         }
         case ChannelMode::AM:

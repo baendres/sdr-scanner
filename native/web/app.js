@@ -26,11 +26,14 @@ const btnDisable1h = document.getElementById("btnDisable1h");
 
 const squelchInput = document.getElementById("squelchInput");
 const squelchMarginInput = document.getElementById("squelchMarginInput");
+const noiseSquelchInput = document.getElementById("noiseSquelchInput");
 const ctcssInput = document.getElementById("ctcssInput");
 const gainInput = document.getElementById("gainInput");
 const btnSquelchApply = document.getElementById("btnSquelchApply");
 const btnSquelchMarginApply = document.getElementById("btnSquelchMarginApply");
 const btnSquelchMarginClear = document.getElementById("btnSquelchMarginClear");
+const btnNoiseSquelchApply = document.getElementById("btnNoiseSquelchApply");
+const btnNoiseSquelchClear = document.getElementById("btnNoiseSquelchClear");
 const btnCtcssApply = document.getElementById("btnCtcssApply");
 const btnCtcssClear = document.getElementById("btnCtcssClear");
 const btnGainApply = document.getElementById("btnGainApply");
@@ -197,7 +200,7 @@ function updateSelectedButtons() {
 
   if (!selectedId) {
     selMeta.textContent = "None";
-    [btnHold, btnSolo, btnMute, btnForce, btnEnable, btnDisable1h, btnSquelchApply, btnSquelchMarginApply, btnSquelchMarginClear, btnCtcssApply, btnCtcssClear, btnGainApply].forEach(b => {
+    [btnHold, btnSolo, btnMute, btnForce, btnEnable, btnDisable1h, btnSquelchApply, btnSquelchMarginApply, btnSquelchMarginClear, btnNoiseSquelchApply, btnNoiseSquelchClear, btnCtcssApply, btnCtcssClear, btnGainApply].forEach(b => {
       if (!b) return;
       b.disabled = true;
       b.classList.remove("on");
@@ -208,7 +211,7 @@ function updateSelectedButtons() {
   const c = cfgById.get(selectedId) || {};
   selMeta.textContent = `${c.label ?? selectedId}  •  ${freqMHz(c.freq_hz)} MHz  •  ${c.mode ?? ""}`;
 
-  [btnHold, btnSolo, btnMute, btnForce, btnEnable, btnDisable1h, btnSquelchApply, btnSquelchMarginApply, btnSquelchMarginClear, btnCtcssApply, btnCtcssClear, btnGainApply].forEach(b => {
+  [btnHold, btnSolo, btnMute, btnForce, btnEnable, btnDisable1h, btnSquelchApply, btnSquelchMarginApply, btnSquelchMarginClear, btnNoiseSquelchApply, btnNoiseSquelchClear, btnCtcssApply, btnCtcssClear, btnGainApply].forEach(b => {
     if (!b) return;
     b.disabled = false;
   });
@@ -221,6 +224,7 @@ function updateSelectedButtons() {
 
   if (squelchInput) squelchInput.value = c.squelchThreshold ?? "";
   if (squelchMarginInput) squelchMarginInput.value = c.squelchNoiseMargin_dB ?? "";
+  if (noiseSquelchInput) noiseSquelchInput.value = c.noiseSquelchThreshold_dB ?? "";
   if (ctcssInput) ctcssInput.value = c.ctcssToneHz ?? "";
   if (gainInput) gainInput.value = c.audioGain_dB ?? "";
 }
@@ -268,6 +272,15 @@ btnSquelchMarginApply?.addEventListener("click", () => {
 btnSquelchMarginClear?.addEventListener("click", () => {
   if (!selectedId) return;
   send({ type: "ChannelSetSquelchNoiseMargin", data: { id: selectedId, squelchNoiseMargin_dB: null } });
+});
+btnNoiseSquelchApply?.addEventListener("click", () => {
+  if (!selectedId || !noiseSquelchInput) return;
+  const v = Number(noiseSquelchInput.value);
+  if (Number.isFinite(v)) send({ type: "ChannelSetNoiseSquelchThreshold", data: { id: selectedId, noiseSquelchThreshold_dB: v } });
+});
+btnNoiseSquelchClear?.addEventListener("click", () => {
+  if (!selectedId) return;
+  send({ type: "ChannelSetNoiseSquelchThreshold", data: { id: selectedId, noiseSquelchThreshold_dB: null } });
 });
 btnCtcssApply?.addEventListener("click", () => {
   if (!selectedId || !ctcssInput) return;
