@@ -81,4 +81,16 @@
   wireFlyout("configFlyout", "btnConfigFlyout", "btnCloseFlyout");
 
   document.getElementById("btnReloadPage")?.addEventListener("click", () => location.reload());
+
+  // TEMPORARY - diagnosing a real-hardware sizing mismatch (xrandr reports 720x480, but the
+  // panel's own config.txt configures a 480x320 framebuffer - something in between, likely
+  // fbcp-style mirroring given hdmi_ignore_hotplug/display_auto_detect are both off, may be
+  // scaling one to the other). window.innerWidth/innerHeight is what Chromium actually uses as
+  // its CSS pixel viewport regardless of what's happening at the X11/framebuffer level below it
+  // - the one number that actually matters for sizing this page. Remove once confirmed.
+  const dbg = document.createElement("div");
+  dbg.style.cssText = "position:fixed; bottom:0; left:0; z-index:999; background:#ef4444; " +
+    "color:#fff; font-size:20px; font-weight:700; padding:4px 10px;";
+  dbg.textContent = `viewport: ${window.innerWidth}x${window.innerHeight}`;
+  document.body.appendChild(dbg);
 })();
