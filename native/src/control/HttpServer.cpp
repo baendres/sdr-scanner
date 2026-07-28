@@ -384,7 +384,14 @@ void HttpServer::handleWsMessage(const std::shared_ptr<WsClient>& client, const 
     json data = msg.value("data", json::object());
 
     try {
-        if (type == "ChannelMute") {
+        if (type == "Ping") {
+            // No-op besides the Ack below - a periodic client-side keepalive (see app.js's
+            // connectWS()) so an idle control connection (quiet whenever nothing's actually
+            // changing) doesn't get silently dropped by an intermediate reverse proxy's idle
+            // connection timeout, which was observed on real hardware as the panel repeatedly
+            // showing "disconnected - retrying" despite the server itself never having crashed
+            // or restarted.
+        } else if (type == "ChannelMute") {
             scanner_.setChannelMute(data.at("id").get<std::string>(), data.at("mute").get<bool>());
         } else if (type == "ChannelSolo") {
             scanner_.setChannelSolo(data.at("id").get<std::string>(), protocol::jsonToTriBool(data.at("solo")));

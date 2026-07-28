@@ -631,6 +631,12 @@ function wireAudioControls() {
 
   connectWS();
   setInterval(() => renderActiveList(), 1000);
+  // Keeps an otherwise-idle control connection alive - it only sees real traffic when a
+  // channel's config/status actually changes, and long quiet stretches (see connectWS()'s
+  // onclose) were found on real hardware to get silently dropped by a reverse proxy sitting in
+  // front of this app, well under any timeout that would ever affect a normal browser tab
+  // talking to it directly.
+  setInterval(() => send({ type: "Ping", data: {} }), 20000);
 
   // Opt-in (see panel_ui/index.html) - a kiosk with no keyboard/mouse needs audio playing
   // without anyone having to find and tap a Start button first. The AudioContext itself may

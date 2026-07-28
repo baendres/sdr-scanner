@@ -596,6 +596,12 @@ Accepts the same control messages as the REST PATCH fields, as `{"type": "...", 
 - e.g. `ChannelMute`, `ChannelHold`, `ChannelSolo`, `ChannelEnable`, `ChannelDisableUntil`,
 `ChannelForceActive`, `ChannelSetSquelch`, `ChannelSetSquelchNoiseMargin`,
 `ChannelSetNoiseSquelchThreshold`, `ChannelSetCtcss`, `ChannelSetAudioGain`, `ChannelSetDwellTime`.
+Also accepts `Ping` (empty `data`), which does nothing besides getting the usual `Ack` back - a
+periodic client-side keepalive (`app.js`'s `connectWS()`, every 20s) exists because the control
+connection otherwise sits idle between actual config/status changes, which on real hardware was
+found to get silently dropped by a reverse proxy sitting in front of this app well under any
+timeout a browser talking to it directly would ever hit - the backend itself never saw a problem
+(no crash, no restart), just repeated client-side "disconnected - retrying" cycles.
 
 Note: the Python web UI had grown a PIN-based "listen only vs. control" access gate
 (`SDRSCANNER_CONTROL_PIN`). That's not reimplemented here yet - every connected client can

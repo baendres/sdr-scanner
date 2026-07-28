@@ -23,10 +23,16 @@ header .status { font-size: 20px; padding: 5px 12px; }
 main { flex: 1; display: flex; min-height: 0; padding: 0; }
 
 /* Live "what's happening now" view (see the note on #activeList in index.html) - only channels
-   seen active recently, same list app.js's renderActiveList() always drove. */
+   seen active recently, same list app.js's renderActiveList() always drove.
+   touch-action: pan-y tells the browser this element only ever needs vertical panning, so a
+   finger-drag is recognized as a scroll gesture immediately rather than the browser waiting to
+   see if it turns into something else first - real-hardware touchscreens (esp. resistive ones)
+   were found to sometimes register a scroll attempt as a tap on whatever strip the finger
+   started on instead. */
 .panel-list {
   width: 330px; flex-shrink: 0; overflow-y: auto; padding: 6px;
   border-right: 1px solid #e5e7eb;
+  touch-action: pan-y;
 }
 /* RSSI/noise-floor/volume numbers - real estate they'd need isn't worth it at this size. */
 .panel-list .meters { display: none; }
@@ -109,14 +115,20 @@ main { flex: 1; display: flex; min-height: 0; padding: 0; }
 .flyout .field-row input { font-size: 21px; padding: 8px 12px; }
 .flyout .field-row button { font-size: 20px; padding: 8px 15px; }
 
-.flyout .active-list { margin-top: 9px; }
+/* Same touch-action reasoning as .panel-list above - the Channels flyout's list is the other
+   place a finger might try to scroll past several rows to reach one further down. */
+.flyout .active-list { margin-top: 9px; touch-action: pan-y; }
 
 /* Compact strip styling shared by both channel lists - the always-visible active-only sidebar
    and the Channels flyout's full list. Single source of truth - keep it that way (see git
    history for why a previous duplicate-selector version of this block silently undid a size
-   change by being declared later at equal CSS specificity). */
+   change by being declared later at equal CSS specificity).
+   user-select: none stops a finger-drag meant as a scroll from ever being interpreted as a text
+   selection instead - selected text on a touch device it can't right-click/copy from is never
+   useful, and a stray selection highlight was one way an attempted scroll could visibly look
+   like it "did something else" instead of scrolling. */
 .panel-list .active-list, .flyout .active-list { gap: 9px; }
-.panel-list .strip, .flyout .strip { padding: 12px; border-radius: 10px; }
+.panel-list .strip, .flyout .strip { padding: 12px; border-radius: 10px; user-select: none; }
 .panel-list .strip .label, .flyout .strip .label { font-size: 26px; }
 .panel-list .strip .freq, .flyout .strip .freq { font-size: 20px; }
 .panel-list .strip .badge, .flyout .strip .badge { font-size: 17px; padding: 3px 9px; }
