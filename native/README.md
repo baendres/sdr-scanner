@@ -128,8 +128,19 @@ the right flags - see "Docker (recommended)"):
 ```
 
 Then open `http://<host>:8080/`. A kiosk-style control page for a small touchscreen (built and
-verified against a 480x320 landscape panel, e.g. a 3.5" RPi HDMI touchscreen) is at
-`http://<host>:8080/panel_ui/index.html` - reuses `app.js` (its DOM IDs match what `app.js`
+verified against a landscape SPI touchscreen, e.g. a "3.5-inch RPi touchscreen" using the mhs35
+overlay) is at `http://<host>:8080/panel_ui/index.html` - sized for a **720x480 CSS pixel
+viewport**, not the panel's own advertised 480x320: with `display_auto_detect=0` and
+`hdmi_ignore_hotplug=1` set (a common config for these SPI panels, since there's no real
+HDMI/EDID negotiation to do), Chromium was found on real hardware to be rendering into a separate
+720x480 canvas that gets mirrored/scaled down onto the physical 480x320 panel (`fbcp`-style)
+rather than talking to it directly - confirmed with `window.innerWidth`/`innerHeight` from inside
+the page itself (see `panel.js`'s git history), since `xrandr`'s own reported mode name
+(`Composite-1`, `0mm x 0mm`, `FIXED_MODE`) turned out to be an unreliable way to infer this from
+outside the browser. If you're deploying to a *different* panel, check
+`window.innerWidth`/`innerHeight` the same way rather than assuming a resolution from the
+hardware's spec sheet - `panel.css`'s sizes only look right at the true CSS viewport, not
+whatever the panel driver advertises to X11. Reuses `app.js` (its DOM IDs match what `app.js`
 already expects, including the squelch/CTCSS/gain fields, which are just relocated - see below),
 with its own `panel.css`/`panel.js` for the layout:
 - A compact **live active-channels list** (only channels seen active recently, same data

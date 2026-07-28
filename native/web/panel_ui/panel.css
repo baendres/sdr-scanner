@@ -1,40 +1,49 @@
-/* Layout for a genuinely small kiosk touchscreen (built/tested against a 480x320 landscape
-   panel - a CUQI/RPi-style 3.5" HDMI touchscreen). style.css supplies shared primitives (.btn,
-   .badge, .strip, .field-row, ...); everything here is page-scoped layout on top of that, kept
-   in a separate file so it can't leak into the main/settings pages that also load style.css. */
+/* Layout for a small kiosk touchscreen - confirmed via window.innerWidth/innerHeight on the
+   actual device (not just xrandr, which was ambiguous here - see git history) to render at
+   720x480, not the 480x320 this was originally designed/tested against. display_auto_detect=0
+   and hdmi_ignore_hotplug=1 in the Pi's config.txt, alongside the mhs35 SPI panel overlay
+   configuring an actual 480x320 framebuffer, point at Chromium rendering into a separate virtual
+   canvas that's mirrored/scaled down onto the real panel (fbcp-style) rather than talking to the
+   physical screen directly - but whatever the mechanism, 720x480 is the number that actually
+   determines how big anything here renders. Every size below is the 480x320 version scaled by
+   exactly 1.5x (480*1.5=720, 320*1.5=480 - both dimensions scale identically, so all the
+   proportions already verified at 480x320 carry over unchanged). style.css supplies shared
+   primitives (.btn, .badge, .strip, .field-row, ...); everything here is page-scoped layout on
+   top of that, kept in a separate file so it can't leak into the main/settings pages that also
+   load style.css. */
 
 html, body { height: 100%; margin: 0; overflow: hidden; }
 body { display: flex; flex-direction: column; }
 
-header { flex-shrink: 0; padding: 6px 10px; min-height: 0; }
-header .title { font-size: 17px; }
-header .status { font-size: 13px; padding: 3px 8px; }
-#btnReloadPage { padding: 3px 10px; font-size: 18px; line-height: 1; }
+header { flex-shrink: 0; padding: 9px 15px; min-height: 0; }
+header .title { font-size: 26px; }
+header .status { font-size: 20px; padding: 5px 12px; }
+#btnReloadPage { padding: 5px 15px; font-size: 27px; line-height: 1; }
 
 main { flex: 1; display: flex; min-height: 0; padding: 0; }
 
 /* Live "what's happening now" view (see the note on #activeList in index.html) - only channels
    seen active recently, same list app.js's renderActiveList() always drove. */
 .panel-list {
-  width: 220px; flex-shrink: 0; overflow-y: auto; padding: 4px;
+  width: 330px; flex-shrink: 0; overflow-y: auto; padding: 6px;
   border-right: 1px solid #e5e7eb;
 }
 /* RSSI/noise-floor/volume numbers - real estate they'd need isn't worth it at this size. */
 .panel-list .meters { display: none; }
 
-.panel-dock { flex: 1; display: flex; flex-direction: column; padding: 6px 8px; min-width: 0; }
+.panel-dock { flex: 1; display: flex; flex-direction: column; padding: 9px 12px; min-width: 0; }
 
 /* Own audio bar rather than app.js's default header-injected controls (see
    data-external-audio-controls in index.html) - needs to read clearly at a glance, not compete
    with the title for header space. The dot's color comes from data-audio-state, set by app.js's
    refreshAudioIndicator() - see that function for what each state means. */
 .audio-bar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 10px; margin-bottom: 8px;
-  background: #f3f4f6; border-radius: 8px;
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 15px; margin-bottom: 12px;
+  background: #f3f4f6; border-radius: 10px;
 }
 .audio-dot {
-  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  width: 21px; height: 21px; border-radius: 50%; flex-shrink: 0;
   background: #9ca3af; transition: background-color 0.2s;
 }
 .audio-dot[data-audio-state="playing"] { background: #10b981; }
@@ -44,23 +53,23 @@ main { flex: 1; display: flex; min-height: 0; padding: 0; }
 .audio-dot[data-audio-state="silent"] { background: #ef4444; }
 @keyframes audio-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .audio-status-text {
-  flex: 1; font-size: 16px; font-weight: 600;
+  flex: 1; font-size: 24px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.audio-bar .btn { flex-shrink: 0; padding: 5px 10px; font-size: 13px; }
+.audio-bar .btn { flex-shrink: 0; padding: 8px 15px; font-size: 20px; }
 
-.dock-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 8px; }
-.dock-top .selected-meta { flex: 1; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dock-top .btn { flex-shrink: 0; padding: 5px 10px; font-size: 13px; }
+.dock-top { display: flex; justify-content: space-between; align-items: center; gap: 9px; margin-bottom: 12px; }
+.dock-top .selected-meta { flex: 1; font-size: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-top .btn { flex-shrink: 0; padding: 8px 15px; font-size: 20px; }
 
 /* The primary touch targets on this screen - biggest text/padding bump of the page. Also
    overrides style.css's .btn-grid .btn (14px 10px padding/15px font, sized for the settings
    page's mouse-driven table) rather than inheriting it verbatim. */
 .btn-grid {
   flex: 1; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr);
-  gap: 7px;
+  gap: 11px;
 }
-.btn-grid .btn { padding: 10px 6px; font-size: 16px; }
+.btn-grid .btn { padding: 15px 9px; font-size: 24px; }
 
 /* Config flyout: squelch/CTCSS/adaptive-margin/gain - tuned rarely enough that they don't need
    to compete with the always-visible action buttons for space (see native/README.md). Slides
@@ -72,35 +81,34 @@ main { flex: 1; display: flex; min-height: 0; padding: 0; }
 .flyout-backdrop.open { opacity: 1; pointer-events: auto; }
 
 .flyout {
-  position: fixed; top: 0; right: -280px; width: 260px; height: 100%;
+  position: fixed; top: 0; right: -420px; width: 390px; height: 100%;
   background: #fff; box-shadow: -2px 0 8px rgba(0,0,0,0.25);
-  padding: 6px 8px; overflow-y: auto; transition: right 0.18s; z-index: 50;
+  padding: 9px 12px; overflow-y: auto; transition: right 0.18s; z-index: 50;
   box-sizing: border-box;
 }
 .flyout.open { right: 0; }
 /* Channels flyout slides in from the left instead - visually distinct from Config, and the two
    can't be open at once anyway (the backdrop blocks the dock's buttons underneath). */
-.flyout.left { left: -280px; right: auto; transition: left 0.18s; }
+.flyout.left { left: -420px; right: auto; transition: left 0.18s; }
 .flyout.left.open { left: 0; right: auto; }
 
 .flyout-header {
   display: flex; justify-content: space-between; align-items: center;
-  font-weight: 700; font-size: 15px; margin-bottom: 6px;
+  font-weight: 700; font-size: 23px; margin-bottom: 9px;
 }
-.flyout .field-row { flex-wrap: wrap; margin-top: 6px; }
-.flyout .field-row label { width: auto; flex-basis: 100%; font-size: 13px; margin-bottom: 2px; }
-.flyout .field-row input { font-size: 14px; padding: 5px 8px; }
-.flyout .field-row button { font-size: 13px; padding: 5px 10px; }
+.flyout .field-row { flex-wrap: wrap; margin-top: 9px; }
+.flyout .field-row label { width: auto; flex-basis: 100%; font-size: 20px; margin-bottom: 3px; }
+.flyout .field-row input { font-size: 21px; padding: 8px 12px; }
+.flyout .field-row button { font-size: 20px; padding: 8px 15px; }
 
-.flyout .active-list { margin-top: 6px; }
+.flyout .active-list { margin-top: 9px; }
 
 /* Compact strip styling shared by both channel lists - the always-visible active-only sidebar
-   and the Channels flyout's full list. Single source of truth - this used to duplicate (and,
-   due to appearing later in the file at equal CSS specificity, silently override) a separate
-   .panel-list-only font-size block above, which is why an earlier size increase never actually
-   took effect on real hardware. */
-.panel-list .active-list, .flyout .active-list { gap: 6px; }
-.panel-list .strip, .flyout .strip { padding: 8px; border-radius: 8px; }
-.panel-list .strip .label, .flyout .strip .label { font-size: 17px; }
-.panel-list .strip .freq, .flyout .strip .freq { font-size: 13px; }
-.panel-list .strip .badge, .flyout .strip .badge { font-size: 11px; padding: 2px 6px; }
+   and the Channels flyout's full list. Single source of truth - keep it that way (see git
+   history for why a previous duplicate-selector version of this block silently undid a size
+   change by being declared later at equal CSS specificity). */
+.panel-list .active-list, .flyout .active-list { gap: 9px; }
+.panel-list .strip, .flyout .strip { padding: 12px; border-radius: 10px; }
+.panel-list .strip .label, .flyout .strip .label { font-size: 26px; }
+.panel-list .strip .freq, .flyout .strip .freq { font-size: 20px; }
+.panel-list .strip .badge, .flyout .strip .badge { font-size: 17px; padding: 3px 9px; }
