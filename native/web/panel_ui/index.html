@@ -41,10 +41,16 @@
         <button id="audioToggle" class="btn">Start</button>
       </div>
 
+      <!-- Selected-channel label gets its own full-width row rather than sharing one with the
+           Channels/Config buttons - a long "label - freq - mode" string squeezed into whatever
+           horizontal space those buttons left over wrapped to 4-5 cramped lines and pushed the
+           action button grid below off-screen on real hardware. -->
       <div class="dock-top">
         <div id="selectedMeta" class="selected-meta">None</div>
-        <button id="btnChannelsFlyout" class="btn">Channels</button>
-        <button id="btnConfigFlyout" class="btn">Config</button>
+        <div class="dock-top-buttons">
+          <button id="btnChannelsFlyout" class="btn">Channels</button>
+          <button id="btnConfigFlyout" class="btn">Config</button>
+        </div>
       </div>
 
       <div class="btn-grid">

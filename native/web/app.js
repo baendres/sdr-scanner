@@ -125,7 +125,7 @@ function refreshAudioIndicator() {
     connecting: "connecting...",
     blocked: "tap to enable audio",
     silent: "no audio",
-    playing: `playing (${bufferedS.toFixed(2)}s buffered)`,
+    playing: `${bufferedS.toFixed(2)}s buffered`,
   }[state];
 
   const statusEl = document.getElementById("audioStatus");

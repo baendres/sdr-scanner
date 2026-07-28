@@ -52,15 +52,23 @@ main { flex: 1; display: flex; min-height: 0; padding: 0; }
 .audio-dot[data-audio-state="blocked"] { background: #f97316; animation: audio-dot-pulse 1s infinite; }
 .audio-dot[data-audio-state="silent"] { background: #ef4444; }
 @keyframes audio-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* Wraps onto a second line rather than truncating with an ellipsis - at this font size, next to
+   the Stop button, there wasn't room for the full "X.XXs buffered" text on one line, which is
+   exactly the number this bar exists to show. */
 .audio-status-text {
-  flex: 1; font-size: 24px; font-weight: 600;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; font-size: 24px; font-weight: 600; line-height: 1.15;
+  overflow-wrap: break-word;
 }
-.audio-bar .btn { flex-shrink: 0; padding: 8px 15px; font-size: 20px; }
+.audio-bar .btn { flex-shrink: 0; align-self: flex-start; padding: 8px 15px; font-size: 20px; }
 
-.dock-top { display: flex; justify-content: space-between; align-items: center; gap: 9px; margin-bottom: 12px; }
-.dock-top .selected-meta { flex: 1; font-size: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dock-top .btn { flex-shrink: 0; padding: 8px 15px; font-size: 20px; }
+.dock-top { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+/* Same reasoning as .audio-status-text above - which channel is selected shouldn't get cut off.
+   Own row (see index.html) rather than sharing one with the Channels/Config buttons - squeezed
+   into whatever width those left over, a long "label - freq - mode" string wrapped to 4-5
+   cramped lines and pushed the action button grid below off-screen on real hardware. */
+.dock-top .selected-meta { font-size: 22px; line-height: 1.15; overflow-wrap: break-word; }
+.dock-top-buttons { display: flex; gap: 9px; }
+.dock-top-buttons .btn { flex: 1; padding: 8px 15px; font-size: 20px; }
 
 /* The primary touch targets on this screen - biggest text/padding bump of the page. Also
    overrides style.css's .btn-grid .btn (14px 10px padding/15px font, sized for the settings
