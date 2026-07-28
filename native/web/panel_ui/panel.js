@@ -79,4 +79,6 @@
 
   wireFlyout("channelsFlyout", "btnChannelsFlyout", "btnCloseChannelsFlyout", renderChannelsFlyoutList);
   wireFlyout("configFlyout", "btnConfigFlyout", "btnCloseFlyout");
+
+  document.getElementById("btnReloadPage")?.addEventListener("click", () => location.reload());
 })();

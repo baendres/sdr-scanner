@@ -10,7 +10,13 @@
 <body data-external-audio-controls data-autostart-audio>
   <header>
     <div class="title">sdr-scanner</div>
-    <div class="status" id="connStatus">disconnected</div>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <div class="status" id="connStatus">disconnected</div>
+      <!-- Plain location.reload() - no server round-trip needed. Exists because this page runs
+           unattended in a kiosk browser (see native/README.md's "Running" section) with no
+           address bar/keyboard to hit a normal browser refresh with. -->
+      <button id="btnReloadPage" class="btn" title="Reload page">&#8635;</button>
+    </div>
   </header>
 
   <main>

@@ -9,6 +9,7 @@ body { display: flex; flex-direction: column; }
 header { flex-shrink: 0; padding: 4px 8px; min-height: 0; }
 header .title { font-size: 13px; }
 header .status { font-size: 10px; padding: 2px 6px; }
+#btnReloadPage { padding: 2px 8px; font-size: 14px; line-height: 1; }
 
 main { flex: 1; display: flex; min-height: 0; padding: 0; }
 
