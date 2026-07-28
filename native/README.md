@@ -129,9 +129,9 @@ the right flags - see "Docker (recommended)"):
 
 Then open `http://<host>:8080/`. A kiosk-style control page for a small touchscreen (built and
 verified against a 480x320 landscape panel, e.g. a 3.5" RPi HDMI touchscreen) is at
-`http://<host>:8080/panel_ui/index.html` - reuses `app.js` unmodified (its DOM IDs match what
-`app.js` already expects, including the squelch/CTCSS/gain fields, which are just relocated -
-see below), with its own `panel.css`/`panel.js` for the layout:
+`http://<host>:8080/panel_ui/index.html` - reuses `app.js` (its DOM IDs match what `app.js`
+already expects, including the squelch/CTCSS/gain fields, which are just relocated - see below),
+with its own `panel.css`/`panel.js` for the layout:
 - A compact **live active-channels list** (only channels seen active recently, same data
   app.js's `renderActiveList()` always drove) for normal at-a-glance scanning, next to a 2x3
   grid of Hold/Solo/Mute/Force/Enable/Disable buttons for whichever channel is selected.
@@ -142,6 +142,20 @@ see below), with its own `panel.css`/`panel.js` for the layout:
     to the dock.
   - **Config** - squelch/CTCSS/adaptive-margin/gain for the now-selected channel; tuned rarely
     enough that it doesn't need to compete with the action buttons for space.
+- **Audio starts itself and shows whether it's actually playing.** A kiosk has no keyboard/mouse
+  to find and click a "Start" button with, so the page sets `data-autostart-audio` on `<body>`
+  (see `app.js`'s `init()`) to call the same `startAudio()` the main page's button does, on load.
+  Browsers still generally require a user gesture before they'll actually produce audio output
+  (autoplay policy) - if that blocks it, the AudioContext just comes up suspended rather than
+  failing outright, and a document-wide click listener resumes it on the panel's very first tap
+  (any tap, not just a specific button - the whole kiosk screen is "gesture enough"). Either way,
+  a colored dot plus status text in its own `.audio-bar` (`data-external-audio-controls` on
+  `<body>` opts out of `app.js`'s default header-injected controls, which have no room on this
+  screen size) reports the real state - `app.js`'s `currentAudioState()`/`refreshAudioIndicator()`
+  drive it from actual observable signals (AudioContext running, a PCM frame received recently)
+  rather than "did we call connect," so e.g. a connected-but-silent upstream shows red ("no
+  audio") the same as a fully dropped connection would, not a falsely reassuring "connected."
+  The main page uses the same state machine for its own (header) `#audioStatus` text, unchanged.
 
 No server-side route registration needed - `HttpServer`'s static handler serves any path under
 `web/` generically, so a new page here is just a new file.

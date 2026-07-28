@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/style.css" />
   <link rel="stylesheet" href="/panel_ui/panel.css" />
 </head>
-<body>
+<body data-external-audio-controls data-autostart-audio>
   <header>
     <div class="title">sdr-scanner</div>
     <div class="status" id="connStatus">disconnected</div>
@@ -23,6 +23,18 @@
     </section>
 
     <section class="panel-dock">
+      <!-- Own audio bar rather than app.js's default header-injected controls (see
+           data-external-audio-controls above and ensureAudioControls()'s guard) - needs to be
+           legible from across a room, not crammed into the header next to the title. The dot's
+           color (panel.css, keyed off data-audio-state) is the "is it actually playing" signal
+           this page asked for: green only when a PCM frame has arrived recently AND the
+           AudioContext isn't suspended - not just "a WebSocket is open." -->
+      <div class="audio-bar">
+        <span class="audio-dot" data-audio-indicator data-audio-state="off"></span>
+        <span id="audioStatus" class="audio-status-text" data-audio-status-text>stopped</span>
+        <button id="audioToggle" class="btn">Start</button>
+      </div>
+
       <div class="dock-top">
         <div id="selectedMeta" class="selected-meta">None</div>
         <button id="btnChannelsFlyout" class="btn">Channels</button>

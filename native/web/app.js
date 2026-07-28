@@ -47,6 +47,10 @@ function log(line) {
 }
 
 function ensureAudioControls() {
+  // panel_ui builds its own audio bar with the same element IDs, sized and placed for a
+  // 480x320 kiosk screen rather than crammed into <header> - see panel_ui/index.html.
+  if (document.body.hasAttribute("data-external-audio-controls")) return;
+
   const header = document.querySelector("header");
   if (!header) return;
   if (document.getElementById("audioControls")) return;
@@ -91,9 +95,43 @@ function ensureAudioControls() {
   header.appendChild(box);
 }
 
-function setAudioStatus(text) {
-  const el = document.getElementById("audioStatus");
-  if (el) el.textContent = text;
+// Audio state machine, driven by actual observable signals rather than "did we call
+// connect/start" bookkeeping - so a page can show a genuinely accurate "not playing" indication
+// (the panel_ui request this exists for) instead of just reflecting which function was last
+// called. "playing" requires all three of: the toggle is on, the AudioContext isn't suspended
+// (browsers block audio output without a user gesture - see the tap-to-resume handler in
+// init()), and a PCM frame has actually arrived recently (catches a connected-but-silent
+// upstream, not just a dropped WebSocket).
+let lastPcmFrameAt = 0;
+const AUDIO_SILENCE_WATCHDOG_MS = 4000;
+
+function currentAudioState() {
+  if (!audioPlaying) return "off";
+  if (!audioWs || audioWs.readyState !== WebSocket.OPEN) return "connecting";
+  if (audioCtx && audioCtx.state !== "running") return "blocked";
+  if (Date.now() - lastPcmFrameAt > AUDIO_SILENCE_WATCHDOG_MS) return "silent";
+  return "playing";
+}
+
+// Updates every element that opted in via data-audio-indicator (state only, e.g. a colored dot)
+// or data-audio-status-text (human label) - lets a page show as much or as little of this as it
+// wants without app.js knowing about any particular page's layout. #audioStatus is kept as a
+// plain text target too, for back-compat with the original single-line status display.
+function refreshAudioIndicator() {
+  const state = currentAudioState();
+  const bufferedS = playbackBuffer ? (playbackBuffer.available() / AUDIO_SAMPLE_RATE) : 0;
+  const label = {
+    off: "stopped",
+    connecting: "connecting...",
+    blocked: "tap to enable audio",
+    silent: "no audio",
+    playing: `playing (${bufferedS.toFixed(2)}s buffered)`,
+  }[state];
+
+  const statusEl = document.getElementById("audioStatus");
+  if (statusEl) statusEl.textContent = label;
+  document.querySelectorAll("[data-audio-status-text]").forEach(el => { el.textContent = label; });
+  document.querySelectorAll("[data-audio-indicator]").forEach(el => { el.dataset.audioState = state; });
 }
 
 function setConn(ok) {
@@ -512,21 +550,22 @@ function handlePcmFrame(buf) {
   const excess = playbackBuffer.available() - maxSamples;
   if (excess > 0) playbackBuffer.discard(excess);
 
-  setAudioStatus(`playing (${(playbackBuffer.available() / AUDIO_SAMPLE_RATE).toFixed(2)}s buffered)`);
+  lastPcmFrameAt = Date.now();
+  refreshAudioIndicator();
 }
 
 function connectAudioWs() {
   const url = audioWsUrl();
-  setAudioStatus("connecting...");
+  refreshAudioIndicator();
   audioWs = new WebSocket(url);
   audioWs.binaryType = "arraybuffer";
 
-  audioWs.onopen = () => setAudioStatus("connected");
+  audioWs.onopen = () => refreshAudioIndicator();
   audioWs.onclose = () => {
-    setAudioStatus("disconnected");
+    refreshAudioIndicator();
     if (audioPlaying) setTimeout(connectAudioWs, 1000);
   };
-  audioWs.onerror = () => setAudioStatus("error");
+  audioWs.onerror = () => refreshAudioIndicator();
   audioWs.onmessage = (ev) => {
     if (ev.data instanceof ArrayBuffer) return handlePcmFrame(ev.data);
     if (ev.data instanceof Blob) ev.data.arrayBuffer().then(handlePcmFrame);
@@ -538,6 +577,11 @@ async function startAudio() {
   audioPlaying = true;
 
   ensureAudioContext();
+  // audioCtx.resume() can reject (browsers block audio output without a user gesture) - that's
+  // expected on an auto-start attempt before the kiosk has been touched yet. Not fatal: it just
+  // leaves the AudioContext suspended, which currentAudioState() reports as "blocked" so the
+  // indicator tells the user to tap - and the document-level click handler in init() resumes it
+  // on the very next tap anywhere on screen.
   try { await audioCtx.resume(); } catch {}
 
   // Reset playback state on (re)start - audioCtx/processorNode persist across stop/start
@@ -551,6 +595,7 @@ async function startAudio() {
   });
 
   connectAudioWs();
+  refreshAudioIndicator();
 }
 
 function stopAudio() {
@@ -560,7 +605,7 @@ function stopAudio() {
     audioWs = null;
   }
   if (audioCtx) audioCtx.suspend().catch(() => {});
-  setAudioStatus("stopped");
+  refreshAudioIndicator();
 }
 
 function wireAudioControls() {
@@ -586,4 +631,21 @@ function wireAudioControls() {
 
   connectWS();
   setInterval(() => renderActiveList(), 1000);
+
+  // Opt-in (see panel_ui/index.html) - a kiosk with no keyboard/mouse needs audio playing
+  // without anyone having to find and tap a Start button first. The AudioContext itself may
+  // still come up suspended (browser autoplay policy - see startAudio()'s comment); the
+  // document-level click listener below resolves that on first touch instead.
+  if (document.body.hasAttribute("data-autostart-audio")) {
+    const btn = document.getElementById("audioToggle");
+    if (btn) btn.textContent = "Stop";
+    startAudio();
+  }
+
+  setInterval(refreshAudioIndicator, 500);
+  document.addEventListener("click", () => {
+    if (audioPlaying && audioCtx && audioCtx.state !== "running") {
+      audioCtx.resume().catch(() => {});
+    }
+  });
 })();
