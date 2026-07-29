@@ -167,6 +167,15 @@ with its own `panel.css`/`panel.js` for the layout:
   rather than "did we call connect," so e.g. a connected-but-silent upstream shows red ("no
   audio") the same as a fully dropped connection would, not a falsely reassuring "connected."
   The main page uses the same state machine for its own (header) `#audioStatus` text, unchanged.
+- **Recovers from a WebSocket stuck in `CONNECTING` forever.** Found on a real phone: turning
+  WiFi off mid-connection left the audio WebSocket in `CONNECTING` indefinitely - no `close`/
+  `error` event ever fired on their own, so the normal `onclose`-based retry loop (`app.js`'s
+  `connectAudioWs()`/`connectWS()`) never got a chance to run, and the UI just sat on
+  "connecting..." with no way to recover short of a manual reload. `armStuckConnectTimeout()`
+  force-closes a handshake that hasn't resolved within 6s (calling `close()` on a `CONNECTING`
+  socket reliably fires `close` per spec, which *does* hand it back to the retry loop), and
+  `online`/`visibilitychange` listeners retry immediately once the browser reports the network
+  came back or the tab became active again, rather than waiting out that fixed delay.
 
 No server-side route registration needed - `HttpServer`'s static handler serves any path under
 `web/` generically, so a new page here is just a new file.

@@ -399,9 +399,38 @@ function handleMsg(msg) {
   }
 }
 
+// A WebSocket handshake that started before the network interface disappeared (found on real
+// hardware: toggling WiFi off on a phone mid-connection) can be left stuck in CONNECTING
+// indefinitely - the browser never fires close/error on its own, so a plain onclose-based retry
+// loop never kicks in, and the UI just sits on "connecting..." forever. Closing a CONNECTING
+// socket does reliably fire close (per spec), which is what actually lets the existing retry
+// logic take back over - this just stops waiting indefinitely for the browser to notice on its
+// own timeline.
+function forceCloseIfStuck(sock) {
+  if (sock && sock.readyState === WebSocket.CONNECTING) {
+    try { sock.close(); } catch { /* ignore */ }
+  }
+}
+
+function armStuckConnectTimeout(sock, timeoutMs) {
+  const t = setTimeout(() => forceCloseIfStuck(sock), timeoutMs);
+  const clear = () => clearTimeout(t);
+  sock.addEventListener("open", clear, { once: true });
+  sock.addEventListener("close", clear, { once: true });
+}
+
+// Proactively retries as soon as the browser reports the network came back or the tab became
+// active again, rather than waiting out armStuckConnectTimeout's fixed delay - covers exactly
+// the WiFi-toggle scenario above without needing to guess how long "stuck" should mean.
+window.addEventListener("online", () => { forceCloseIfStuck(ws); forceCloseIfStuck(audioWs); });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { forceCloseIfStuck(ws); forceCloseIfStuck(audioWs); }
+});
+
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
+  armStuckConnectTimeout(ws, 6000);
   ws.onopen = () => { setConn(true); log("ws connected"); };
   ws.onclose = () => { setConn(false); log("ws disconnected - retrying"); setTimeout(connectWS, 1000); };
   ws.onerror = () => { setConn(false); };
@@ -559,6 +588,7 @@ function connectAudioWs() {
   refreshAudioIndicator();
   audioWs = new WebSocket(url);
   audioWs.binaryType = "arraybuffer";
+  armStuckConnectTimeout(audioWs, 6000);
 
   audioWs.onopen = () => refreshAudioIndicator();
   audioWs.onclose = () => {
