@@ -100,13 +100,27 @@ inline json outputConfigToJson(const OutputConfig& oc) {
     };
 }
 
+// Client-facing variant of outputConfigToJson - blanks out the Icecast source password rather
+// than echoing it back verbatim. Used only for the outward snapshot (GET /api/state, WS
+// Snapshot); HttpServer::applyOutputPatchFields reads the raw outputConfigToJson() directly (not
+// through here) when merging a PATCH onto the existing record, and separately treats an empty
+// incoming password as "leave it unchanged" so a save that never touches this blanked-out field
+// can't itself blank out the real, persisted password.
+inline json redactedOutputConfigToJson(const OutputConfig& oc) {
+    json j = outputConfigToJson(oc);
+    if (j.contains("config") && j["config"].is_object() && j["config"].contains("password")) {
+        j["config"]["password"] = "";
+    }
+    return j;
+}
+
 inline json snapshotToJson(const ScannerSnapshot& s) {
     json channels = json::array();
     for (const auto& cc : s.channels) channels.push_back(channelConfigToJson(cc));
     json receivers = json::array();
     for (const auto& rc : s.receivers) receivers.push_back(receiverConfigToJson(rc));
     json outputs = json::array();
-    for (const auto& oc : s.outputs) outputs.push_back(outputConfigToJson(oc));
+    for (const auto& oc : s.outputs) outputs.push_back(redactedOutputConfigToJson(oc));
     json statuses = json::array();
     for (const auto& st : s.channelStatuses) statuses.push_back(channelStatusToJson(st));
 

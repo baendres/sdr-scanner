@@ -68,6 +68,25 @@ void AudioOutputIcecast::reconnect() {
 
 void AudioOutputIcecast::close() {
     stopFlag_ = true;
+    {
+        // Unstick whatever blocking Asio call runStreamingThread() is currently in - see the
+        // note on activeSocket_ in the header. Without this, join() below could hang
+        // indefinitely against an Icecast server that's accepted the TCP connection but never
+        // responds (or a network path that silently drops packets rather than resetting).
+        //
+        // shutdown() first, not just close(): a plain close() on a socket another thread is
+        // blocked reading/writing on is documented by POSIX as unspecified (and confirmed by a
+        // real test here to just not interrupt it on Linux - the blocked read only returned
+        // once the peer independently closed its end). shutdown(SHUT_RDWR), by contrast, acts
+        // on the connection itself rather than the fd, and is the standard portable way to make
+        // a concurrent blocking recv()/send() on the same socket return immediately.
+        std::lock_guard<std::mutex> lock(socketMutex_);
+        if (activeSocket_) {
+            boost::system::error_code ec;
+            activeSocket_->shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+            activeSocket_->close(ec);
+        }
+    }
     if (streamingThread_.joinable()) streamingThread_.join();
 }
 
@@ -79,10 +98,9 @@ void AudioOutputIcecast::send(const std::vector<int16_t>& samples) {
     }
 }
 
-boost::asio::ip::tcp::socket AudioOutputIcecast::connectSourceSocket() {
+void AudioOutputIcecast::connectSourceSocket(boost::asio::ip::tcp::socket& socket) {
     std::cout << "AudioOutputIcecast: connecting to " << host_ << ":" << port_ << mount_ << "\n";
 
-    tcp::socket socket(ioc_);
     tcp::resolver resolver(ioc_);
     asio::connect(socket, resolver.resolve(host_, std::to_string(port_)));
     socket.set_option(tcp::no_delay(true));
@@ -126,7 +144,6 @@ boost::asio::ip::tcp::socket AudioOutputIcecast::connectSourceSocket() {
     }
 
     std::cout << "AudioOutputIcecast: SOURCE connected: " << statusLine << "\n";
-    return socket;
 }
 
 void AudioOutputIcecast::encodeAndSendLoop(boost::asio::ip::tcp::socket& socket) {
@@ -189,13 +206,22 @@ void AudioOutputIcecast::runStreamingThread() {
             outputBuffer_.clear();
         }
 
+        auto socket = std::make_shared<tcp::socket>(ioc_);
+        {
+            std::lock_guard<std::mutex> lock(socketMutex_);
+            activeSocket_ = socket;
+        }
         try {
-            tcp::socket socket = connectSourceSocket();
-            encodeAndSendLoop(socket);
+            connectSourceSocket(*socket);
+            encodeAndSendLoop(*socket);
             boost::system::error_code ec;
-            socket.shutdown(tcp::socket::shutdown_both, ec);
+            socket->shutdown(tcp::socket::shutdown_both, ec);
         } catch (const std::exception& e) {
             if (!stopFlag_) std::cerr << "AudioOutputIcecast: " << e.what() << "\n";
+        }
+        {
+            std::lock_guard<std::mutex> lock(socketMutex_);
+            activeSocket_.reset();
         }
 
         auto deadline = std::chrono::steady_clock::now() + kReconnectBackoff;

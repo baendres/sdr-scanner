@@ -180,6 +180,18 @@ with its own `panel.css`/`panel.js` for the layout:
 No server-side route registration needed - `HttpServer`'s static handler serves any path under
 `web/` generically, so a new page here is just a new file.
 
+### Authentication (off by default)
+
+The control API (static files, REST, and the WS upgrade) has **no authentication unless you turn
+it on** - fine for the trusted-home-LAN deployment this was built for, but not if you port-forward
+`8080`/`8123` for remote access (e.g. to listen in away from home) rather than something like a
+WireGuard/VPN tunnel back into the LAN. To require HTTP Basic Auth, set both
+`SDRSCAN_AUTH_USER`/`SDRSCAN_AUTH_PASSWORD` (`docker-compose.yaml`'s `environment:` section, or
+directly in the shell for the bare binary) before starting the container - unset (the default)
+means auth stays off. This is a basic gate (not constant-time, no rate limiting, no per-user
+accounts) meant to keep the control API from being wide open on a forwarded port, not a substitute
+for a real VPN if you want it properly secured.
+
 ## Architecture
 
 Single process, multiple threads (see also the comment block at the top of

@@ -1,6 +1,7 @@
 #include "HttpServer.h"
 #include "Protocol.h"
 #include "../receiver/SoapyReceiver.h"
+#include "../util/Base64.h"
 
 #include <algorithm>
 #include <chrono>
@@ -46,9 +47,13 @@ std::string channelIdFromPath(const std::string& target, const std::string& pref
 } // namespace
 
 HttpServer::HttpServer(Scanner& scanner, std::string host, int port, std::string webRoot,
-                       std::function<void()> requestShutdown)
+                       std::function<void()> requestShutdown,
+                       std::string authUser, std::string authPassword)
     : scanner_(scanner), host_(std::move(host)), port_(port), webRoot_(std::move(webRoot)),
       requestShutdown_(std::move(requestShutdown)) {
+    if (!authUser.empty() && !authPassword.empty()) {
+        expectedAuthHeader_ = "Basic " + base64Encode(authUser + ":" + authPassword);
+    }
     scanner_.setEventCallback([this](const ScannerEvent& event) { onScannerEvent(event); });
 }
 
@@ -90,13 +95,12 @@ void HttpServer::stop() {
     acceptor_.reset();
 
     // NOTE: deliberately closing the raw socket (lowest layer) rather than doing a graceful
-    // websocket::stream::close() here. Each client's session thread (runWsSession, still
-    // running - these are detached, not tracked/joined) is normally blocked in
-    // client->ws->read(...) on this exact same stream object. Beast's websocket::stream is
-    // not safe for concurrent operations from two threads, and close() also waits
-    // (unbounded, no timeout configured) for the peer's close handshake response - either of
-    // those was enough to hang this call indefinitely whenever a browser tab was still
-    // connected, which is why Ctrl+C never actually exited the process. Closing the
+    // websocket::stream::close() here. Each client's session thread (runWsSession) is normally
+    // blocked in client->ws->read(...) on this exact same stream object. Beast's
+    // websocket::stream is not safe for concurrent operations from two threads, and close()
+    // also waits (unbounded, no timeout configured) for the peer's close handshake response -
+    // either of those was enough to hang this call indefinitely whenever a browser tab was
+    // still connected, which is why Ctrl+C never actually exited the process. Closing the
     // underlying socket instead just makes the session thread's pending read() fail
     // immediately, which is thread-safe and unblocks it without a handshake round-trip.
     std::lock_guard<std::mutex> lock(clientsMutex_);
@@ -105,6 +109,25 @@ void HttpServer::stop() {
         beast::get_lowest_layer(*c->ws).close(ec);
     }
     clients_.clear();
+
+    // Take ownership of every still-open connection (WS or plain HTTP) and join its thread -
+    // see the Connection comment in HttpServer.h for why this exists. closeFn unsticks whatever
+    // blocking read that thread is currently in (same reasoning as the clients_ loop above,
+    // generalized to connections that never upgraded to WS at all); join() below then can't
+    // hang past that.
+    std::vector<std::shared_ptr<Connection>> toJoin;
+    {
+        std::lock_guard<std::mutex> connLock(connectionsMutex_);
+        toJoin = connections_;
+        connections_.clear();
+    }
+    for (auto& conn : toJoin) {
+        std::lock_guard<std::mutex> connLock(conn->mutex);
+        if (conn->closeFn) conn->closeFn();
+    }
+    for (auto& conn : toJoin) {
+        if (conn->thread.joinable()) conn->thread.join();
+    }
 }
 
 void HttpServer::acceptLoop() {
@@ -122,32 +145,86 @@ void HttpServer::acceptLoop() {
             if (stopFlag_) break;
             continue;
         }
-        std::thread(&HttpServer::handleConnection, this, std::move(socket)).detach();
+
+        auto socketPtr = std::make_shared<tcp::socket>(std::move(socket));
+        auto conn = std::make_shared<Connection>();
+        conn->closeFn = [socketPtr] {
+            boost::system::error_code ec2;
+            socketPtr->close(ec2);
+        };
+        // push_back and the thread's own creation+assignment into conn->thread must happen
+        // under the same lock acquisition as handleConnection's cleanup-path detach() of that
+        // same conn->thread (see there) - otherwise the new thread could run far enough to hit
+        // that detach() before this assignment below has actually landed, racing on
+        // conn->thread itself. Both sides taking connectionsMutex_ here serializes them: the
+        // spawned thread can't get past its own connectionsMutex_ lock in the cleanup path
+        // until this scope (and therefore the assignment) has completed.
+        std::lock_guard<std::mutex> lock(connectionsMutex_);
+        connections_.push_back(conn);
+        conn->thread = std::thread(&HttpServer::handleConnection, this, conn, socketPtr);
     }
 }
 
-void HttpServer::handleConnection(tcp::socket socket) {
+// Plain HTTP Basic Auth: compares the request's Authorization header against the precomputed
+// expectedAuthHeader_ (see the constructor) rather than decoding and comparing user/password
+// separately - simpler, and avoids needing a base64-decode helper at all. Not constant-time;
+// deliberately not hardened against a timing side-channel - this is meant to keep the control
+// API from being wide open if someone forwards its port past their home LAN (see the
+// constructor's comment), not to withstand a targeted attacker who can already measure
+// response-time deltas on the connection.
+bool HttpServer::requireAuth(tcp::socket& socket, const http::request<http::string_body>& req) {
+    if (expectedAuthHeader_.empty()) return true; // auth disabled (the default)
+
+    auto it = req.find(http::field::authorization);
+    if (it != req.end() && it->value() == expectedAuthHeader_) return true;
+
+    http::response<http::string_body> res{http::status::unauthorized, req.version()};
+    res.set(http::field::www_authenticate, "Basic realm=\"sdr-scanner\"");
+    res.set(http::field::content_type, "application/json");
+    res.body() = nlohmann::json{{"error", "unauthorized"}}.dump();
+    res.keep_alive(req.keep_alive());
+    res.prepare_payload();
+    boost::system::error_code ec;
+    http::write(socket, res, ec);
+    return false;
+}
+
+void HttpServer::handleConnection(std::shared_ptr<Connection> conn, std::shared_ptr<tcp::socket> socketPtr) {
     try {
         beast::flat_buffer buffer;
         for (;;) {
             http::request<http::string_body> req;
-            http::read(socket, buffer, req);
+            http::read(*socketPtr, buffer, req);
+
+            if (!requireAuth(*socketPtr, req)) {
+                if (!req.keep_alive()) break;
+                continue; // 401 already written; wait for the next request on this connection
+            }
 
             if (websocket::is_upgrade(req)) {
                 auto client = std::make_shared<WsClient>();
-                client->ws = std::make_shared<WsStream>(std::move(socket));
+                client->ws = std::make_shared<WsStream>(std::move(*socketPtr));
                 try {
                     client->ws->accept(req);
                 } catch (const std::exception& e) {
                     std::cerr << "HttpServer: WS handshake failed: " << e.what() << "\n";
-                    return;
+                    break;
                 }
                 {
                     std::lock_guard<std::mutex> lock(clientsMutex_);
                     clients_.push_back(client);
                 }
+                {
+                    // From here on, stop()'s shutdown path needs to close the WS stream (not
+                    // the now-moved-from socketPtr) to unstick this thread's pending read.
+                    std::lock_guard<std::mutex> lock(conn->mutex);
+                    conn->closeFn = [ws = client->ws] {
+                        boost::system::error_code ec2;
+                        beast::get_lowest_layer(*ws).close(ec2);
+                    };
+                }
                 runWsSession(client);
-                return; // socket ownership moved into the WS stream
+                break; // socket ownership moved into the WS stream; fall through to cleanup below
             }
 
             std::string target(req.target());
@@ -264,11 +341,22 @@ void HttpServer::handleConnection(tcp::socket socket) {
             }
 
             res.keep_alive(req.keep_alive());
-            http::write(socket, res);
+            http::write(*socketPtr, res);
             if (!req.keep_alive()) break;
         }
     } catch (const std::exception&) {
         // connection closed / read error - normal at EOF, nothing to do
+    }
+
+    // Ending normally (client disconnected, or the WS session above returned): remove ourselves
+    // from connections_ and detach, since nothing will ever need to close or join us again. If
+    // we're not found, stop() got here first - it already took ownership of `conn` (see its
+    // toJoin snapshot) and is about to join this thread itself, so leave conn->thread alone.
+    std::lock_guard<std::mutex> lock(connectionsMutex_);
+    auto it = std::find(connections_.begin(), connections_.end(), conn);
+    if (it != connections_.end()) {
+        conn->thread.detach();
+        connections_.erase(it);
     }
 }
 
@@ -336,8 +424,22 @@ void HttpServer::applyOutputPatchFields(int64_t outputId, const json& body) {
     auto it = std::find_if(snapshot.outputs.begin(), snapshot.outputs.end(),
                             [&](const OutputConfig& oc) { return oc.id == outputId; });
     if (it == snapshot.outputs.end()) throw std::runtime_error("Output not found: " + std::to_string(outputId));
-    json merged = protocol::outputConfigToJson(*it);
-    for (auto& [k, v] : body.items()) merged[k] = v;
+    json merged = protocol::outputConfigToJson(*it); // raw - unlike GET /api/state, has the real password
+
+    json patch = body;
+    // GET /api/state never echoes the real password back out (see
+    // protocol::redactedOutputConfigToJson), so the settings page's password field is always
+    // blank unless the user actually typed a new one. Treat an empty incoming password the same
+    // way as "field not present" - keep whatever's already saved - rather than blanking out a
+    // real password just because this save didn't touch it.
+    if (patch.contains("config") && patch["config"].is_object() &&
+        patch["config"].value("password", std::string()).empty() &&
+        merged.contains("config") && merged["config"].is_object() &&
+        merged["config"].contains("password")) {
+        patch["config"]["password"] = merged["config"]["password"];
+    }
+
+    for (auto& [k, v] : patch.items()) merged[k] = v;
     merged["id"] = outputId;
     scanner_.upsertOutputConfig(protocol::outputConfigFromJson(merged));
 }

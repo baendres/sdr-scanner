@@ -45,12 +45,20 @@ void Scanner::start() {
     if (outputs.empty()) {
         outputs.push_back(createAudioOutput(OutputConfig{0, "local", "{}", true}));
     }
-    audioMixer_ = std::make_unique<AudioMixer>(static_cast<int>(receiverConfigs_.size()), outputs);
+    // Disabled receivers stay in receiverConfigs_/the DB (so the settings page can still show
+    // and re-enable them) but shouldn't actually open hardware or spin up a scan thread - same
+    // "enabled" semantics as outputConfigs_ just above.
+    std::vector<ReceiverConfig> enabledReceivers;
+    for (auto& rc : receiverConfigs_) {
+        if (rc.enabled) enabledReceivers.push_back(rc);
+    }
 
-    for (size_t i = 0; i < receiverConfigs_.size(); i++) {
+    audioMixer_ = std::make_unique<AudioMixer>(static_cast<int>(enabledReceivers.size()), outputs);
+
+    for (size_t i = 0; i < enabledReceivers.size(); i++) {
         auto sink = audioMixer_->createReceiverSink(static_cast<int>(i));
         receivers_.push_back(std::make_unique<SoapyReceiver>(
-            receiverConfigs_[i],
+            enabledReceivers[i],
             [this](ChannelStatusUpdate update) { onChannelStatus(std::move(update)); },
             sink));
     }
@@ -356,6 +364,13 @@ void Scanner::deleteOutputConfig(int64_t outputId) {
 }
 
 void Scanner::setMaxChannelsPerWindow(int maxChannelsPerWindow) {
+    // buildWindows() resizes each window's channel list down to this many, then removes exactly
+    // those channels from the allocation set - at <= 0 that resize empties the list without
+    // removing anything, so the allocation loop never terminates. Reject before it ever reaches
+    // buildWindows() (this throws; HttpServer's request handler turns it into a 400).
+    if (maxChannelsPerWindow <= 0) {
+        throw std::runtime_error("maxChannelsPerWindow must be positive");
+    }
     settings_.maxChannelsPerWindow = maxChannelsPerWindow;
     db_.saveScannerSetting("maxChannelsPerWindow", std::to_string(maxChannelsPerWindow));
     buildWindows();

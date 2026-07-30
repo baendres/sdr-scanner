@@ -41,3 +41,30 @@ TEST_CASE("soapyDeviceToJson handles missing driver/label too") {
     CHECK(j.at("label") == "");
     CHECK(j.at("serial") == "xyz");
 }
+
+TEST_CASE("redactedOutputConfigToJson blanks the Icecast password") {
+    OutputConfig oc;
+    oc.id = 1;
+    oc.type = "icecast";
+    oc.configJson = R"({"url":"http://stream.example.com:8000/mystream","password":"hackme"})";
+    oc.enabled = true;
+
+    auto raw = protocol::outputConfigToJson(oc);
+    CHECK(raw.at("config").at("password") == "hackme"); // sanity check on the un-redacted path
+
+    auto redacted = protocol::redactedOutputConfigToJson(oc);
+    CHECK(redacted.at("config").at("password") == "");
+    CHECK(redacted.at("config").at("url") == "http://stream.example.com:8000/mystream"); // untouched
+}
+
+TEST_CASE("redactedOutputConfigToJson leaves outputs with no password field alone") {
+    OutputConfig oc;
+    oc.id = 2;
+    oc.type = "udp";
+    oc.configJson = R"({"serverIp":"127.0.0.1","serverPort":12345})";
+    oc.enabled = true;
+
+    auto redacted = protocol::redactedOutputConfigToJson(oc);
+    CHECK_FALSE(redacted.at("config").contains("password"));
+    CHECK(redacted.at("config").at("serverIp") == "127.0.0.1");
+}

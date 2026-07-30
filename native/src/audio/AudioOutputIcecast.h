@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -41,8 +42,11 @@ public:
 
 private:
     void runStreamingThread();
-    // Returns an open, handshake-accepted socket, or throws std::runtime_error.
-    boost::asio::ip::tcp::socket connectSourceSocket();
+    // Connects and completes the SOURCE handshake on the given (already-constructed) socket, or
+    // throws std::runtime_error. Takes the socket by reference (rather than returning one, as
+    // before) so runStreamingThread() can publish a stable pointer to it in activeSocket_ before
+    // any blocking call starts - see the note on activeSocket_/close() for why.
+    void connectSourceSocket(boost::asio::ip::tcp::socket& socket);
     void encodeAndSendLoop(boost::asio::ip::tcp::socket& socket);
 
     std::string host_;
@@ -59,6 +63,16 @@ private:
     boost::asio::io_context ioc_;
     std::atomic<bool> stopFlag_{true};
     std::thread streamingThread_;
+
+    // The socket runStreamingThread() is currently blocked on (DNS/connect, the SOURCE
+    // handshake read, or an MP3-frame write) - null between connection attempts. All of those
+    // are plain synchronous Asio calls with no timeout, so a stalled/unresponsive Icecast
+    // server could otherwise hang close() in streamingThread_.join() indefinitely. close()
+    // closes this socket out from under the streaming thread, which - same technique already
+    // used for HttpServer's acceptor and AudioOutputWebsocket's client sockets - makes whatever
+    // blocking call is in progress fail immediately instead of hanging.
+    std::mutex socketMutex_;
+    std::shared_ptr<boost::asio::ip::tcp::socket> activeSocket_;
 };
 
 } // namespace sdrscan

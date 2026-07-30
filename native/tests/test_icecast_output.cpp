@@ -1,11 +1,16 @@
 // Tests for the Icecast audio output's pure-logic pieces (URL parsing, base64 encoding) - no
-// network/server needed. The streaming/encoding thread itself needs a real Icecast server to
-// meaningfully exercise and isn't covered here.
+// network/server needed - plus a real-socket regression test for close()'s shutdown-timeout
+// behavior below (see that test for why a real listener is used instead of pure logic).
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "../src/audio/AudioOutputIcecast.h"
 #include "../src/util/Base64.h"
+
+#include <boost/asio.hpp>
+
+#include <chrono>
+#include <thread>
 
 using namespace sdrscan;
 
@@ -73,4 +78,42 @@ TEST_CASE("AudioOutputIcecast::send bounds its buffer like a maxlen deque") {
     std::vector<int16_t> chunk(20000, 1);
     CHECK_NOTHROW(out.send(chunk));
     CHECK_NOTHROW(out.send(chunk));
+}
+
+TEST_CASE("AudioOutputIcecast::close() doesn't hang against a server that accepts but never responds") {
+    // Regression test for a real hang: connectSourceSocket() blocks in a plain synchronous
+    // read_until() waiting for SOURCE-response headers, with no timeout. A bare listener that
+    // accepts the TCP connection and then sends nothing reproduces exactly that stall (matches
+    // e.g. an Icecast server wedged at the app layer, or a path that silently drops return
+    // packets) without needing a real Icecast server.
+    namespace asio = boost::asio;
+    using tcp = asio::ip::tcp;
+
+    asio::io_context serverIoc;
+    tcp::acceptor acceptor(serverIoc, tcp::endpoint(tcp::v4(), 0));
+    unsigned short port = acceptor.local_endpoint().port();
+
+    std::thread serverThread([&acceptor, &serverIoc] {
+        boost::system::error_code ec;
+        tcp::socket socket(serverIoc);
+        acceptor.accept(socket, ec);
+        // Hold the connection open without ever responding - the streaming thread should be
+        // stuck in read_until() at this point. Just idle here; the test process exiting (this
+        // thread is detached below) cleans up the socket either way.
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    });
+    serverThread.detach();
+
+    AudioOutputIcecast out("http://127.0.0.1:" + std::to_string(port) + "/mystream", "hackme");
+    out.reconnect();
+
+    // Give the streaming thread time to actually connect, send the SOURCE request, and land in
+    // the blocking read_until() call this test means to interrupt.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    auto start = std::chrono::steady_clock::now();
+    out.close();
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    CHECK(elapsed < std::chrono::seconds(2));
 }

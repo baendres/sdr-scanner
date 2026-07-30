@@ -35,8 +35,16 @@ public:
     // requestShutdown, if given, is called when a client hits POST /api/restart (the settings
     // page's "Restart Now" button) - see the comment on that route in HttpServer.cpp for what
     // it's expected to do.
+    //
+    // authUser/authPassword, if both non-empty, turn on HTTP Basic Auth for every request
+    // (static files, REST, and the WS upgrade) - see the comment on requireAuth() in
+    // HttpServer.cpp. Off by default (either left empty): this control API has historically had
+    // no authentication at all, matching the "trusted home LAN" deployment documented in
+    // native/README.md - this only matters once someone exposes the port beyond that LAN (e.g.
+    // port-forwarding for remote access, as native/README.md's remote-access section covers).
     HttpServer(Scanner& scanner, std::string host, int port, std::string webRoot,
-               std::function<void()> requestShutdown = nullptr);
+               std::function<void()> requestShutdown = nullptr,
+               std::string authUser = "", std::string authPassword = "");
     ~HttpServer();
 
     void start();
@@ -51,8 +59,27 @@ private:
         std::mutex writeMutex;
     };
 
+    // Tracks every accepted connection (HTTP or WS, whichever it ends up being) purely for
+    // shutdown safety - closeFn is whatever's currently the live "lowest layer" to close to
+    // unstick that connection's thread from a blocking read (the plain tcp::socket before any
+    // WS upgrade, or the websocket::stream after one - see handleConnection()). Previously these
+    // threads were fire-and-forget (.detach()'d, never tracked at all outside the WS-upgraded
+    // case in clients_), which meant a thread still mid-request when the HttpServer is
+    // destroyed could go on to touch `this` (scanner_, webRoot_, ...) after destruction.
+    struct Connection {
+        std::mutex mutex; // guards closeFn against concurrent update-on-upgrade vs. call-from-stop()
+        std::function<void()> closeFn;
+        std::thread thread;
+    };
+
     void acceptLoop();
-    void handleConnection(boost::asio::ip::tcp::socket socket);
+    void handleConnection(std::shared_ptr<Connection> conn,
+                           std::shared_ptr<boost::asio::ip::tcp::socket> socketPtr);
+    // Returns true if the request is authorized (or auth is off) - the caller can proceed.
+    // Otherwise writes a 401 response to the socket itself and returns false, so the caller can
+    // just `if (!requireAuth(...)) break;`/`return`.
+    bool requireAuth(boost::asio::ip::tcp::socket& socket,
+                      const boost::beast::http::request<boost::beast::http::string_body>& req);
     void runWsSession(const std::shared_ptr<WsClient>& client);
     void handleWsMessage(const std::shared_ptr<WsClient>& client, const std::string& raw);
     void sendToClient(const std::shared_ptr<WsClient>& client, const json& msg);
@@ -68,6 +95,9 @@ private:
     int port_;
     std::string webRoot_;
     std::function<void()> requestShutdown_;
+    // Precomputed "Basic <base64(user:password)>" expected header value; empty means auth is
+    // off. See requireAuth() and the constructor comment.
+    std::string expectedAuthHeader_;
 
     boost::asio::io_context ioc_;
     std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor_;
@@ -76,6 +106,9 @@ private:
 
     std::mutex clientsMutex_;
     std::vector<std::shared_ptr<WsClient>> clients_;
+
+    std::mutex connectionsMutex_;
+    std::vector<std::shared_ptr<Connection>> connections_;
 };
 
 } // namespace sdrscan

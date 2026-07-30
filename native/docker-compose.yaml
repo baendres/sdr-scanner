@@ -7,6 +7,12 @@ services:
       - "8080:8080"   # web UI + REST/WS control API
       - "8123:8123"   # websocket audio output (see example-sdrscan.yaml -> outputs)
     privileged: true
+    # Uncomment to require HTTP Basic Auth on the control API (off by default) - see
+    # native/README.md's "Authentication" section for when this matters (e.g. port-forwarding
+    # 8080/8123 for remote access instead of a VPN back into the LAN).
+    # environment:
+    #   SDRSCAN_AUTH_USER: admin
+    #   SDRSCAN_AUTH_PASSWORD: change-me
     volumes:
       - ./data:/data
       - ./volk:/root/.volk   # persists `docker exec <container> volk_profile`'s tuned kernel

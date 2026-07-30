@@ -1,6 +1,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -63,6 +64,16 @@ int main(int argc, char** argv) {
         if (!host.empty()) settings.httpHost = host;
         if (port > 0) settings.httpPort = port;
 
+        // Optional HTTP Basic Auth for the control API - env vars rather than the SQLite config
+        // (like every other setting) so this credential never ends up sitting in the DB file in
+        // plaintext, and so it's set once at deploy time (docker-compose environment:) rather
+        // than through the same live-editable API it's meant to protect. Unset by default - see
+        // HttpServer's constructor comment and native/README.md for when to turn this on.
+        const char* authUserEnv = std::getenv("SDRSCAN_AUTH_USER");
+        const char* authPasswordEnv = std::getenv("SDRSCAN_AUTH_PASSWORD");
+        std::string authUser = authUserEnv ? authUserEnv : "";
+        std::string authPassword = authPasswordEnv ? authPasswordEnv : "";
+
         // Lets the settings page's "Restart Now" button (POST /api/restart) request the same
         // graceful shutdown Ctrl+C/SIGTERM does, but exits non-zero afterward instead of 0 (see
         // kRestartRequestedExitCode) so it can be told apart from a deliberate stop. Paired with
@@ -73,7 +84,8 @@ int main(int argc, char** argv) {
         // that are meant to be the ones that come back after a reboot. Running the binary
         // directly with no restart policy means the button just stops the process.
         sdrscan::HttpServer httpServer(scanner, settings.httpHost, settings.httpPort, webRoot,
-                                        []() { g_restartRequested = true; g_stop = true; });
+                                        []() { g_restartRequested = true; g_stop = true; },
+                                        authUser, authPassword);
 
         // Port of Scanner.py's audioServerProcess.is_alive() watchdog - see
         // Scanner::setAudioMixerDiedCallback's header comment. A dead audio pipeline with

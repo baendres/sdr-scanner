@@ -172,7 +172,13 @@ ScannerSettings Database::loadScannerSettings() {
     while (s.step()) {
         std::string key = s.colText(0);
         std::string value = s.colText(1);
-        if (key == "maxChannelsPerWindow") settings.maxChannelsPerWindow = std::stoi(value);
+        if (key == "maxChannelsPerWindow") {
+            // Defensive clamp against a stale <= 0 value written before Scanner::
+            // setMaxChannelsPerWindow started rejecting it (see that function) - buildWindows()
+            // infinite-loops on <= 0, so this can't be allowed to load silently.
+            int v = std::stoi(value);
+            settings.maxChannelsPerWindow = v > 0 ? v : ScannerSettings{}.maxChannelsPerWindow;
+        }
         else if (key == "httpHost") settings.httpHost = value;
         else if (key == "httpPort") settings.httpPort = std::stoi(value);
     }
