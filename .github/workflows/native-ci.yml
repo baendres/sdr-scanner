@@ -1,0 +1,52 @@
+name: native CI
+
+on:
+  push:
+    paths:
+      - "native/**"
+      - ".github/workflows/native-ci.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - ".github/workflows/native-ci.yml"
+
+jobs:
+  build-and-test:
+    # Matches native/Dockerfile's base image so the same apt package names/versions apply -
+    # Ubuntu 24.04 ships a recent-enough gnuradio-dev with the C++ headers/libs this needs, no
+    # from-source GNU Radio build required (see native/README.md).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            gnuradio-dev \
+            libvolk-bin \
+            libboost-dev libboost-system-dev \
+            libsqlite3-dev \
+            nlohmann-json3-dev \
+            portaudio19-dev \
+            libsoapysdr-dev soapysdr-module-all soapysdr-module-rtlsdr \
+            rtl-sdr librtlsdr-dev \
+            libyaml-cpp-dev \
+            libmp3lame-dev \
+            catch2 \
+            ca-certificates
+
+      - name: Configure
+        working-directory: native
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release .
+
+      - name: Build
+        working-directory: native
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Test
+        working-directory: native/build
+        # No SDR hardware in CI - the suite is written for that (see native/README.md's
+        # "Testing without SDR hardware" section), so this covers the full 50+ tests as-is.
+        run: ctest --output-on-failure
