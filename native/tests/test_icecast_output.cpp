@@ -9,7 +9,9 @@
 
 #include <boost/asio.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <future>
 #include <thread>
 
 using namespace sdrscan;
@@ -93,27 +95,44 @@ TEST_CASE("AudioOutputIcecast::close() doesn't hang against a server that accept
     tcp::acceptor acceptor(serverIoc, tcp::endpoint(tcp::v4(), 0));
     unsigned short port = acceptor.local_endpoint().port();
 
-    std::thread serverThread([&acceptor, &serverIoc] {
+    // Signaled once the server side has actually accepted the TCP connection, so the test can
+    // wait on that deterministically instead of guessing a fixed delay. serverShouldExit lets
+    // the server thread return promptly once the test's done with it, so it stays joinable
+    // (rather than detached) - a detached thread here would go on referencing acceptor/serverIoc
+    // by reference after they're destroyed at the end of this function, which is undefined
+    // behavior (and a plausible source of intermittent CI crashes, not just a lint nit).
+    std::promise<void> acceptedPromise;
+    std::future<void> acceptedFuture = acceptedPromise.get_future();
+    std::atomic<bool> serverShouldExit{false};
+
+    std::thread serverThread([&] {
         boost::system::error_code ec;
         tcp::socket socket(serverIoc);
         acceptor.accept(socket, ec);
+        acceptedPromise.set_value();
         // Hold the connection open without ever responding - the streaming thread should be
-        // stuck in read_until() at this point. Just idle here; the test process exiting (this
-        // thread is detached below) cleans up the socket either way.
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        // stuck in read_until() at this point - until told to stop.
+        while (!serverShouldExit) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
     });
-    serverThread.detach();
 
     AudioOutputIcecast out("http://127.0.0.1:" + std::to_string(port) + "/mystream", "hackme");
     out.reconnect();
 
-    // Give the streaming thread time to actually connect, send the SOURCE request, and land in
-    // the blocking read_until() call this test means to interrupt.
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    // Wait for the server to actually accept the connection (bounded, not a magic sleep).
+    REQUIRE(acceptedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    // Accepting the TCP connection only proves the handshake completed, not that
+    // AudioOutputIcecast has gotten as far as sending the SOURCE request and landing in
+    // read_until() yet - a short, bounded settle covers that remaining (fast, local) gap.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     auto start = std::chrono::steady_clock::now();
     out.close();
     auto elapsed = std::chrono::steady_clock::now() - start;
+
+    serverShouldExit = true;
+    serverThread.join();
 
     CHECK(elapsed < std::chrono::seconds(2));
 }

@@ -103,12 +103,19 @@ void HttpServer::stop() {
     // still connected, which is why Ctrl+C never actually exited the process. Closing the
     // underlying socket instead just makes the session thread's pending read() fail
     // immediately, which is thread-safe and unblocks it without a handshake round-trip.
-    std::lock_guard<std::mutex> lock(clientsMutex_);
-    for (auto& c : clients_) {
-        boost::system::error_code ec;
-        beast::get_lowest_layer(*c->ws).close(ec);
+    //
+    // Scoped so clientsMutex_ is released before the join loop below: runWsSession's own
+    // cleanup (after its read() unblocks from the close() here) needs clientsMutex_ too, so
+    // holding it across conn->thread.join() would deadlock this function against the very
+    // thread it's trying to join, every time a WS client is connected at shutdown.
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex_);
+        for (auto& c : clients_) {
+            boost::system::error_code ec;
+            beast::get_lowest_layer(*c->ws).close(ec);
+        }
+        clients_.clear();
     }
-    clients_.clear();
 
     // Take ownership of every still-open connection (WS or plain HTTP) and join its thread -
     // see the Connection comment in HttpServer.h for why this exists. closeFn unsticks whatever
@@ -204,6 +211,18 @@ void HttpServer::handleConnection(std::shared_ptr<Connection> conn, std::shared_
             if (websocket::is_upgrade(req)) {
                 auto client = std::make_shared<WsClient>();
                 client->ws = std::make_shared<WsStream>(std::move(*socketPtr));
+                {
+                    // Must happen before accept() (the handshake itself), not after: accept()
+                    // blocks on the network, and closeFn still pointed at the now-moved-from
+                    // socketPtr until this ran - closing that during a shutdown that raced the
+                    // handshake was a no-op (moved-from sockets aren't open), so stop() could
+                    // hang joining this thread while it sat in accept() indefinitely.
+                    std::lock_guard<std::mutex> lock(conn->mutex);
+                    conn->closeFn = [ws = client->ws] {
+                        boost::system::error_code ec2;
+                        beast::get_lowest_layer(*ws).close(ec2);
+                    };
+                }
                 try {
                     client->ws->accept(req);
                 } catch (const std::exception& e) {
@@ -213,15 +232,6 @@ void HttpServer::handleConnection(std::shared_ptr<Connection> conn, std::shared_
                 {
                     std::lock_guard<std::mutex> lock(clientsMutex_);
                     clients_.push_back(client);
-                }
-                {
-                    // From here on, stop()'s shutdown path needs to close the WS stream (not
-                    // the now-moved-from socketPtr) to unstick this thread's pending read.
-                    std::lock_guard<std::mutex> lock(conn->mutex);
-                    conn->closeFn = [ws = client->ws] {
-                        boost::system::error_code ec2;
-                        beast::get_lowest_layer(*ws).close(ec2);
-                    };
                 }
                 runWsSession(client);
                 break; // socket ownership moved into the WS stream; fall through to cleanup below
