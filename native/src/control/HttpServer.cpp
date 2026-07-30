@@ -210,14 +210,16 @@ void HttpServer::handleConnection(std::shared_ptr<Connection> conn, std::shared_
 
             if (websocket::is_upgrade(req)) {
                 auto client = std::make_shared<WsClient>();
-                client->ws = std::make_shared<WsStream>(std::move(*socketPtr));
                 {
-                    // Must happen before accept() (the handshake itself), not after: accept()
-                    // blocks on the network, and closeFn still pointed at the now-moved-from
-                    // socketPtr until this ran - closing that during a shutdown that raced the
-                    // handshake was a no-op (moved-from sockets aren't open), so stop() could
-                    // hang joining this thread while it sat in accept() indefinitely.
+                    // The move out of socketPtr and the closeFn update must be atomic relative
+                    // to stop() (both under conn->mutex), not just closeFn update before
+                    // accept(): moving the socket first and only then acquiring the lock left a
+                    // window where stop() could grab conn->mutex in between, see the still-old
+                    // closeFn (pointing at the now-moved-from socketPtr - closing that is a
+                    // no-op), and proceed to join a thread that's about to block in accept()
+                    // indefinitely. Locking before the move closes that window entirely.
                     std::lock_guard<std::mutex> lock(conn->mutex);
+                    client->ws = std::make_shared<WsStream>(std::move(*socketPtr));
                     conn->closeFn = [ws = client->ws] {
                         boost::system::error_code ec2;
                         beast::get_lowest_layer(*ws).close(ec2);

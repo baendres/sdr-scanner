@@ -120,19 +120,34 @@ TEST_CASE("AudioOutputIcecast::close() doesn't hang against a server that accept
     AudioOutputIcecast out("http://127.0.0.1:" + std::to_string(port) + "/mystream", "hackme");
     out.reconnect();
 
-    // Wait for the server to actually accept the connection (bounded, not a magic sleep).
-    REQUIRE(acceptedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
-    // Accepting the TCP connection only proves the handshake completed, not that
-    // AudioOutputIcecast has gotten as far as sending the SOURCE request and landing in
-    // read_until() yet - a short, bounded settle covers that remaining (fast, local) gap.
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Wait for the server to actually accept the connection (bounded, not a magic sleep). Not a
+    // REQUIRE here - std::thread's destructor calls std::terminate() (crashing the whole test
+    // binary, not just failing this test) if it's still joinable when a REQUIRE's stack-unwind
+    // blows past it, so serverThread must be dealt with (see below) before any assertion that
+    // could throw.
+    bool accepted = acceptedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
 
-    auto start = std::chrono::steady_clock::now();
-    out.close();
-    auto elapsed = std::chrono::steady_clock::now() - start;
+    std::chrono::steady_clock::duration elapsed{};
+    if (accepted) {
+        // Accepting the TCP connection only proves the handshake completed, not that
+        // AudioOutputIcecast has gotten as far as sending the SOURCE request and landing in
+        // read_until() yet - a short, bounded settle covers that remaining (fast, local) gap.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        auto start = std::chrono::steady_clock::now();
+        out.close();
+        elapsed = std::chrono::steady_clock::now() - start;
+    } else {
+        // The server thread is presumably still blocked in acceptor.accept() (never reached
+        // its serverShouldExit poll loop) - close the acceptor to unstick it so it's still
+        // joinable below rather than left running past this function's return.
+        boost::system::error_code ec;
+        acceptor.close(ec);
+    }
 
     serverShouldExit = true;
-    serverThread.join();
+    if (serverThread.joinable()) serverThread.join();
 
+    REQUIRE(accepted);
     CHECK(elapsed < std::chrono::seconds(2));
 }
