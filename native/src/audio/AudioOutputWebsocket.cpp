@@ -89,20 +89,34 @@ void AudioOutputWebsocket::close() {
         acceptor_->close(ec);
     }
     if (acceptThread_.joinable()) acceptThread_.join();
+
+    // Must happen before writerThread_.join(), not after: writerLoop() may be blocked in a
+    // client's write() against an unresponsive peer right now (dropped WiFi, a suspended
+    // browser tab, ...) - see the note on frameQueue_ in the header for the real crash-loop
+    // this exact scenario already caused once, on AudioMixer's own thread, before the writer
+    // was split onto its own thread. That split doesn't help here: closing these sockets is
+    // what makes a stuck write() fail and return, so joining first (the previous order) meant
+    // this call - and therefore AudioMixer's shutdown, and therefore the whole process's
+    // shutdown/restart - could hang indefinitely the moment a client was in that state.
+    //
+    // shutdown() before close(): a bare close() from a different thread than the one blocked
+    // on the socket isn't a reliably documented way to interrupt it (POSIX leaves this
+    // unspecified); shutdown() acts on the connection itself rather than the file descriptor
+    // and is the standard, portable way to make a concurrent blocking read/write on the same
+    // socket return immediately - see AudioOutputIcecast::close()'s matching fix/note.
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex_);
+        for (auto& c : clients_) {
+            boost::system::error_code ec;
+            auto& socket = beast::get_lowest_layer(*c);
+            socket.shutdown(tcp::socket::shutdown_both, ec);
+            socket.close(ec);
+        }
+        clients_.clear();
+    }
+
     if (writerThread_.joinable()) writerThread_.join();
     acceptor_.reset();
-
-    // Close the raw socket rather than the graceful websocket::stream::close() - the latter
-    // waits (no timeout configured) for the peer's close handshake response, which would hang
-    // this call indefinitely against a browser tab that's open but not responding. See the
-    // matching note in HttpServer::stop() for the (more severe, thread-safety) version of
-    // this same issue.
-    std::lock_guard<std::mutex> lock(clientsMutex_);
-    for (auto& c : clients_) {
-        boost::system::error_code ec;
-        beast::get_lowest_layer(*c).close(ec);
-    }
-    clients_.clear();
 }
 
 void AudioOutputWebsocket::send(const std::vector<int16_t>& samples) {

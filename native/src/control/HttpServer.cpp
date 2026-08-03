@@ -82,6 +82,7 @@ void HttpServer::start() {
 
     stopFlag_ = false;
     acceptThread_ = std::thread(&HttpServer::acceptLoop, this);
+    wsWriterThread_ = std::thread(&HttpServer::wsWriterLoop, this);
     std::cout << "HttpServer listening on " << host_ << ":" << port_ << "\n";
 }
 
@@ -112,10 +113,26 @@ void HttpServer::stop() {
         std::lock_guard<std::mutex> lock(clientsMutex_);
         for (auto& c : clients_) {
             boost::system::error_code ec;
-            beast::get_lowest_layer(*c->ws).close(ec);
+            // shutdown() before close(): a bare close() from a different thread than the one
+            // blocked reading the socket isn't a reliably documented way to interrupt it
+            // (POSIX leaves this unspecified); shutdown() acts on the connection itself rather
+            // than the file descriptor and is the standard, portable way to make a concurrent
+            // blocking read on the same socket return immediately - see
+            // AudioOutputIcecast::close()'s matching fix/note for where this mattered in
+            // practice.
+            auto& socket = beast::get_lowest_layer(*c->ws);
+            socket.shutdown(tcp::socket::shutdown_both, ec);
+            socket.close(ec);
         }
         clients_.clear();
     }
+
+    // Must come after the clients_ socket-closing block above, not before: wsWriterLoop() may
+    // be blocked in a write() to one of those sockets right now (see the note on writeQueue_ in
+    // the header), and closing them is what makes that write() fail and return. Joining first
+    // would risk exactly the same hang the clients_-closing/join reordering elsewhere in this
+    // function already fixed for a different thread.
+    if (wsWriterThread_.joinable()) wsWriterThread_.join();
 
     // Take ownership of every still-open connection (WS or plain HTTP) and join its thread -
     // see the Connection comment in HttpServer.h for why this exists. closeFn unsticks whatever
@@ -156,7 +173,9 @@ void HttpServer::acceptLoop() {
         auto socketPtr = std::make_shared<tcp::socket>(std::move(socket));
         auto conn = std::make_shared<Connection>();
         conn->closeFn = [socketPtr] {
+            // shutdown() before close() - see the matching note on the clients_ loop in stop().
             boost::system::error_code ec2;
+            socketPtr->shutdown(tcp::socket::shutdown_both, ec2);
             socketPtr->close(ec2);
         };
         // push_back and the thread's own creation+assignment into conn->thread must happen
@@ -221,8 +240,12 @@ void HttpServer::handleConnection(std::shared_ptr<Connection> conn, std::shared_
                     std::lock_guard<std::mutex> lock(conn->mutex);
                     client->ws = std::make_shared<WsStream>(std::move(*socketPtr));
                     conn->closeFn = [ws = client->ws] {
+                        // shutdown() before close() - see the matching note on the clients_
+                        // loop in stop().
                         boost::system::error_code ec2;
-                        beast::get_lowest_layer(*ws).close(ec2);
+                        auto& socket = beast::get_lowest_layer(*ws);
+                        socket.shutdown(tcp::socket::shutdown_both, ec2);
+                        socket.close(ec2);
                     };
                 }
                 try {
@@ -457,11 +480,39 @@ void HttpServer::applyOutputPatchFields(int64_t outputId, const json& body) {
 }
 
 void HttpServer::sendToClient(const std::shared_ptr<WsClient>& client, const json& msg) {
-    std::lock_guard<std::mutex> lock(client->writeMutex);
-    boost::system::error_code ec;
-    std::string payload = msg.dump();
-    client->ws->text(true);
-    client->ws->write(boost::asio::buffer(payload), ec);
+    std::lock_guard<std::mutex> lock(writeQueueMutex_);
+    writeQueue_.push_back({client, msg.dump()});
+}
+
+void HttpServer::wsWriterLoop() {
+    while (!stopFlag_) {
+        PendingWrite pw;
+        bool have = false;
+        {
+            std::lock_guard<std::mutex> lock(writeQueueMutex_);
+            if (!writeQueue_.empty()) {
+                pw = std::move(writeQueue_.front());
+                writeQueue_.pop_front();
+                have = true;
+            }
+        }
+        if (!have) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+
+        // writeMutex is now mostly a belt-and-suspenders guard (this is the only thread that
+        // ever calls write() on a WsStream) rather than the thing preventing concurrent writes
+        // it originally was - harmless to keep.
+        std::lock_guard<std::mutex> lock(pw.client->writeMutex);
+        boost::system::error_code ec;
+        pw.client->ws->text(true);
+        pw.client->ws->write(boost::asio::buffer(pw.payload), ec);
+        // No dead-client cleanup on a write failure here (unlike the old synchronous
+        // broadcast()) - runWsSession()'s own read() loop will notice the same dead connection
+        // once it actually breaks and remove it from clients_ there, so this doesn't need to
+        // touch clientsMutex_ at all.
+    }
 }
 
 void HttpServer::runWsSession(const std::shared_ptr<WsClient>& client) {
@@ -563,25 +614,19 @@ void HttpServer::onScannerEvent(const ScannerEvent& event) {
 }
 
 void HttpServer::broadcast(const json& msg) {
+    // Enqueues for wsWriterLoop_ to actually send - never writes to a socket here. See the
+    // note on writeQueue_ in the header: this is reached synchronously from a receiver's own
+    // scan-hopping thread (via Scanner::emit() -> the channel-status callback chain), which a
+    // blocking write to a stuck client must never be allowed to freeze.
     std::vector<std::shared_ptr<WsClient>> clientsCopy;
     {
         std::lock_guard<std::mutex> lock(clientsMutex_);
         clientsCopy = clients_;
     }
     std::string payload = msg.dump();
-    std::vector<std::shared_ptr<WsClient>> dead;
+    std::lock_guard<std::mutex> lock(writeQueueMutex_);
     for (auto& c : clientsCopy) {
-        std::lock_guard<std::mutex> lock(c->writeMutex);
-        boost::system::error_code ec;
-        c->ws->text(true);
-        c->ws->write(boost::asio::buffer(payload), ec);
-        if (ec) dead.push_back(c);
-    }
-    if (!dead.empty()) {
-        std::lock_guard<std::mutex> lock(clientsMutex_);
-        for (auto& d : dead) {
-            clients_.erase(std::remove(clients_.begin(), clients_.end(), d), clients_.end());
-        }
+        writeQueue_.push_back({c, payload});
     }
 }
 

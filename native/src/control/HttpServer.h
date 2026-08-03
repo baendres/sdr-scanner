@@ -7,6 +7,7 @@
 #include <boost/beast/core/stream_traits.hpp>
 
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -82,7 +83,12 @@ private:
                       const boost::beast::http::request<boost::beast::http::string_body>& req);
     void runWsSession(const std::shared_ptr<WsClient>& client);
     void handleWsMessage(const std::shared_ptr<WsClient>& client, const std::string& raw);
+    // Enqueues onto writeQueue_ - never writes to the socket itself. See the note on
+    // writeQueue_/wsWriterThread_ for why: a caller here can be a receiver's own scan-hopping
+    // thread (via the channel-status callback chain), which a blocking write to a stuck client
+    // must never be allowed to freeze.
     void sendToClient(const std::shared_ptr<WsClient>& client, const json& msg);
+    void wsWriterLoop();
 
     void onScannerEvent(const ScannerEvent& event);
     void broadcast(const json& msg);
@@ -109,6 +115,25 @@ private:
 
     std::mutex connectionsMutex_;
     std::vector<std::shared_ptr<Connection>> connections_;
+
+    // sendToClient()/broadcast() used to call WsStream::write() directly on whatever thread
+    // called them - fine for a request/response handled on its own connection thread, but
+    // broadcast() is also reached synchronously from Scanner::emit() via the channel-status
+    // callback chain (ChannelBlockBase::reportStatus() -> ... -> SoapyReceiver::
+    // checkCurrentWindow()), i.e. on that *receiver's own scan-hopping thread*. write() has no
+    // timeout, so one stuck control-WS client (a dropped WiFi connection, a suspended browser
+    // tab - the same real scenario already seen on the separate audio WS this session) would
+    // silently freeze that receiver's entire loop: no more window hops, no more status updates,
+    // no crash and no watchdog to notice (only AudioMixer has a liveness check). This queue +
+    // dedicated writer thread decouples every producer from the actual socket write, the same
+    // pattern (and for the same reason) as AudioOutputWebsocket's frameQueue_/writerThread_.
+    struct PendingWrite {
+        std::shared_ptr<WsClient> client;
+        std::string payload;
+    };
+    std::mutex writeQueueMutex_;
+    std::deque<PendingWrite> writeQueue_;
+    std::thread wsWriterThread_;
 };
 
 } // namespace sdrscan
