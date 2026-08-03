@@ -47,6 +47,7 @@ public:
                      int dmrSlot,
                      std::optional<uint32_t> talkgroupFilter,
                      std::shared_ptr<DsdccDecodeBlock> existingDecodeBlock,
+                     bool otherSlotPresent,
                      std::function<void(ChannelStatusUpdate)> statusCallback);
 
     void setForceActive(bool forceActive) override;
@@ -77,6 +78,11 @@ private:
     gr::filter::fir_filter_ccf::sptr blockChannelFilter_;
     gr::analog::quadrature_demod_cf::sptr blockQuadDemod_;
     gr::blocks::null_sink::sptr blockRfDiscardSink_; // shared-tap instance only
+    // Owning instance only, and only when otherSlotPresent is false (see constructor) - DsdccDecodeBlock
+    // requires both its output ports connected regardless of whether a real channel exists for
+    // the other slot in this window, so this discards it the same way blockRfDiscardSink_
+    // discards an unused RF input.
+    gr::blocks::null_sink::sptr blockUnusedSlotSink_;
 
     gr::filter::rational_resampler_fff::sptr blockResampler_; // decoded 8kHz -> audioSampleRate_
     gr::blocks::multiply_const_ff::sptr blockAudioGain_;

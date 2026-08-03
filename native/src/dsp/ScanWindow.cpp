@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <stdexcept>
 
 namespace sdrscan {
@@ -23,12 +24,20 @@ namespace {
 // second slot's ChannelBlockDMR can be handed the first's decodeBlock() instead of building its
 // own.
 using DmrDecodersByFreq = std::map<int64_t, std::shared_ptr<DsdccDecodeBlock>>;
+// freq_hz -> which dmrSlot values (1 and/or 2) have a channel in this window - computed once,
+// upfront, from the whole window's channel list rather than discovered as the build loop below
+// happens to reach each channel, since whichever ChannelBlockDMR instance builds the shared
+// decodeBlock() first needs to know whether the *other* slot is coming at all (regardless of
+// build order) to correctly wire up DsdccDecodeBlock's required second output port - see
+// ChannelBlockDMR's otherSlotPresent constructor param.
+using DmrSlotsByFreq = std::map<int64_t, std::set<int>>;
 
 std::shared_ptr<ChannelBlockBase> buildChannelBlock(const ChannelConfig& cc,
                                                       int64_t hardwareFreq_hz,
                                                       int rfSampleRate,
                                                       int audioSampleRate,
                                                       DmrDecodersByFreq& dmrDecodersByFreq,
+                                                      const DmrSlotsByFreq& dmrSlotsByFreq,
                                                       std::function<void(ChannelStatusUpdate)> statusCallback) {
     std::shared_ptr<ChannelBlockBase> block;
     switch (cc.mode) {
@@ -69,10 +78,14 @@ std::shared_ptr<ChannelBlockBase> buildChannelBlock(const ChannelConfig& cc,
             auto it = dmrDecodersByFreq.find(cc.freq_hz);
             std::shared_ptr<DsdccDecodeBlock> existingDecodeBlock =
                 (it != dmrDecodersByFreq.end()) ? it->second : nullptr;
+            int otherSlot = (*cc.dmrSlot == 1) ? 2 : 1;
+            auto slotsIt = dmrSlotsByFreq.find(cc.freq_hz);
+            bool otherSlotPresent =
+                slotsIt != dmrSlotsByFreq.end() && slotsIt->second.count(otherSlot) > 0;
             auto dmrBlock = gnuradio::make_block_sptr<ChannelBlockDMR>(
                 cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.audioGain_dB, cc.dwellTime_s,
                 cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate, *cc.dmrSlot,
-                cc.dmrTalkgroupFilter, existingDecodeBlock, statusCallback);
+                cc.dmrTalkgroupFilter, existingDecodeBlock, otherSlotPresent, statusCallback);
             dmrDecodersByFreq[cc.freq_hz] = dmrBlock->decodeBlock();
             block = dmrBlock;
             break;
@@ -144,10 +157,17 @@ ScanWindow::ScanWindow(const ScanWindowConfig& config,
       rfSampleRate_(rfSampleRate),
       audioSampleRate_(selectAudioSampleRate(rfSampleRate)) {
 
+    DmrSlotsByFreq dmrSlotsByFreq;
+    for (const auto& cc : config.channelConfigs) {
+        if (cc.mode == ChannelMode::DMR && cc.dmrSlot.has_value()) {
+            dmrSlotsByFreq[cc.freq_hz].insert(*cc.dmrSlot);
+        }
+    }
+
     DmrDecodersByFreq dmrDecodersByFreq;
     for (const auto& cc : config.channelConfigs) {
         channels_.push_back(buildChannelBlock(cc, hardwareFreq_hz_, rfSampleRate_, audioSampleRate_,
-                                                dmrDecodersByFreq, statusCallback));
+                                                dmrDecodersByFreq, dmrSlotsByFreq, statusCallback));
     }
 
     scanWindowBlock_ = gnuradio::make_block_sptr<ScanWindowBlock>(channels_, audioSampleRate_, AUDIO_SAMPLERATE);

@@ -44,6 +44,7 @@ ChannelBlockDMR::ChannelBlockDMR(const std::string& channelId,
                                    int dmrSlot,
                                    std::optional<uint32_t> talkgroupFilter,
                                    std::shared_ptr<DsdccDecodeBlock> existingDecodeBlock,
+                                   bool otherSlotPresent,
                                    std::function<void(ChannelStatusUpdate)> statusCallback)
     // No power squelch for DMR (see header) - the base class still wants a value, it's just
     // never read back through effectiveSquelchThreshold() here.
@@ -102,6 +103,17 @@ ChannelBlockDMR::ChannelBlockDMR(const std::string& channelId,
         connect(self(), 0, blockFreqXlatingFilter_, 0);
         connect(channelized, 0, blockQuadDemod_, 0);
         connect(blockQuadDemod_, 0, decodeBlock_, 0);
+
+        if (!otherSlotPresent) {
+            // No channel for the other timeslot exists in this window, so nothing will ever
+            // connect decodeBlock_'s other output port - but DsdccDecodeBlock's io_signature
+            // requires both connected regardless (GNU Radio's flowgraph validation fails
+            // otherwise: "insufficient connected output ports"). Discard it, same reasoning as
+            // blockRfDiscardSink_ above.
+            int unusedSlotPort = (dmrSlot_ == 1) ? 1 : 0;
+            blockUnusedSlotSink_ = gr::blocks::null_sink::make(sizeof(float));
+            connect(decodeBlock_, unusedSlotPort, blockUnusedSlotSink_, 0);
+        }
     }
 
     // Resample mbelib's fixed 8kHz decoded audio up/down to this window's audioSampleRate_ -

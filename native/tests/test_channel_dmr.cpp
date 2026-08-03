@@ -33,7 +33,7 @@ TEST_CASE("ChannelBlockDMR: second slot at the same freq_hz shares the first slo
         "ts1", "Test TS1", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
         kRfSampleRate, kAudioSampleRate, /*dmrSlot=*/1, /*talkgroupFilter=*/std::nullopt,
-        /*existingDecodeBlock=*/nullptr, [](ChannelStatusUpdate) {});
+        /*existingDecodeBlock=*/nullptr, /*otherSlotPresent=*/true, [](ChannelStatusUpdate) {});
 
     REQUIRE(ts1->decodeBlock() != nullptr);
 
@@ -41,7 +41,7 @@ TEST_CASE("ChannelBlockDMR: second slot at the same freq_hz shares the first slo
         "ts2", "Test TS2", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
         kRfSampleRate, kAudioSampleRate, /*dmrSlot=*/2, /*talkgroupFilter=*/std::nullopt,
-        /*existingDecodeBlock=*/ts1->decodeBlock(), [](ChannelStatusUpdate) {});
+        /*existingDecodeBlock=*/ts1->decodeBlock(), /*otherSlotPresent=*/true, [](ChannelStatusUpdate) {});
 
     CHECK(ts2->decodeBlock() == ts1->decodeBlock());
 }
@@ -51,7 +51,7 @@ TEST_CASE("ChannelBlockDMR: rejects a slot number other than 1 or 2") {
         "bad", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
         kRfSampleRate, kAudioSampleRate, /*dmrSlot=*/3, /*talkgroupFilter=*/std::nullopt,
-        /*existingDecodeBlock=*/nullptr, [](ChannelStatusUpdate) {}));
+        /*existingDecodeBlock=*/nullptr, /*otherSlotPresent=*/false, [](ChannelStatusUpdate) {}));
 }
 
 TEST_CASE("ChannelBlockDMR: rejects an RF sample rate that isn't a whole multiple of 48000Hz") {
@@ -59,7 +59,7 @@ TEST_CASE("ChannelBlockDMR: rejects an RF sample rate that isn't a whole multipl
         "bad", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
         /*rfSampleRate=*/1'000'000, kAudioSampleRate, /*dmrSlot=*/1, /*talkgroupFilter=*/std::nullopt,
-        /*existingDecodeBlock=*/nullptr, [](ChannelStatusUpdate) {}));
+        /*existingDecodeBlock=*/nullptr, /*otherSlotPresent=*/false, [](ChannelStatusUpdate) {}));
 }
 
 TEST_CASE("ChannelBlockDMR: forceActive forces one slot ACTIVE without affecting the other") {
@@ -69,12 +69,12 @@ TEST_CASE("ChannelBlockDMR: forceActive forces one slot ACTIVE without affecting
         "ts1", "Test TS1", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
         kRfSampleRate, kAudioSampleRate, /*dmrSlot=*/1, /*talkgroupFilter=*/std::nullopt,
-        /*existingDecodeBlock=*/nullptr, [](ChannelStatusUpdate) {});
+        /*existingDecodeBlock=*/nullptr, /*otherSlotPresent=*/true, [](ChannelStatusUpdate) {});
     auto ts2 = gnuradio::make_block_sptr<ChannelBlockDMR>(
         "ts2", "Test TS2", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
         kRfSampleRate, kAudioSampleRate, /*dmrSlot=*/2, /*talkgroupFilter=*/std::nullopt,
-        /*existingDecodeBlock=*/ts1->decodeBlock(), [](ChannelStatusUpdate) {});
+        /*existingDecodeBlock=*/ts1->decodeBlock(), /*otherSlotPresent=*/true, [](ChannelStatusUpdate) {});
 
     // Feed a short burst of noise through both so the flowgraph is actually exercised (checked
     // separately below that this doesn't crash), then drive getStatus() directly - it doesn't
@@ -95,6 +95,33 @@ TEST_CASE("ChannelBlockDMR: forceActive forces one slot ACTIVE without affecting
     ts1->setForceActive(true);
     CHECK(ts1->getStatus() == ChannelStatus::FORCE_ACTIVE);
     CHECK(ts2->getStatus() == ChannelStatus::IDLE);
+}
+
+// Regression test for a real crash: a DMR channel configured alone (no channel for the other
+// timeslot at the same freq_hz) used to leave DsdccDecodeBlock's other output port permanently
+// unconnected, since only the slot that has a real ChannelBlockDMR ever calls connect() on it.
+// DsdccDecodeBlock's io_signature requires exactly 2 connected outputs, so gr::top_block::start()
+// - called from SoapyReceiver's own thread when the flowgraph is (re)built - would throw
+// "insufficient connected output ports" uncaught, crashing the whole process (this bug was latent
+// until the "give DMR windows their own RF bandwidth" fix let DMR windows actually build at all).
+TEST_CASE("ChannelBlockDMR: a lone slot with no sibling starts without a flowgraph validation error") {
+    auto tb = gr::make_top_block("test-dmr-lone-slot");
+
+    auto ts2Only = gnuradio::make_block_sptr<ChannelBlockDMR>(
+        "ts2only", "Test TS2 only", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
+        /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
+        kRfSampleRate, kAudioSampleRate, /*dmrSlot=*/2, /*talkgroupFilter=*/std::nullopt,
+        /*existingDecodeBlock=*/nullptr, /*otherSlotPresent=*/false, [](ChannelStatusUpdate) {});
+
+    auto noise = gr::analog::noise_source_c::make(gr::analog::GR_GAUSSIAN, 0.1, 42);
+    auto head = gr::blocks::head::make(sizeof(gr_complex), static_cast<uint64_t>(kRfSampleRate * 0.05));
+    auto sink = gr::blocks::null_sink::make(sizeof(float));
+
+    tb->connect(noise, 0, head, 0);
+    tb->connect(head, 0, ts2Only, 0);
+    tb->connect(ts2Only, 0, sink, 0);
+
+    REQUIRE_NOTHROW(tb->run());
 }
 
 // Regression test for a real crash: SoapyReceiver::rebuildGraph() used to pick an RF sample rate
