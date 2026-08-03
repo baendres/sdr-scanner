@@ -18,18 +18,19 @@ restart for any change (squelch value, adding a channel, etc). This rewrite:
    multiprocessing shared-memory audio, which the Python version needed only because of the
    process-per-receiver design.
 
-DMR/P25 digital scanning was explicitly out of scope for this pass (see "Explicitly
-Deferred" below).
+DMR/P25 digital scanning was explicitly out of scope for the initial foundation pass; DMR
+(conventional) landed since then - see "DMR/P25 digital decode" below. P25 (conventional and
+trunked) is still deferred (see "Explicitly Deferred").
 
 ## Status: foundation phase
 
 This is a working foundation, not full feature parity with the Python app yet:
 
 - **Implemented**: SQLite config + live control API, RTL-SDR/Soapy receivers, FM/NFM/AM/
-  NOAA/BFM_EAS demod, CTCSS squelch, multi-receiver scan-window scheduling, audio mixing with
-  Local (PortAudio) / UDP / WebSocket / Icecast outputs, the web UI (including a settings page
-  for editing channels/receivers/outputs).
-- **Deferred** (see below): SSB, DMR/P25.
+  NOAA/BFM_EAS/DMR (conventional) demod, CTCSS squelch, multi-receiver scan-window scheduling,
+  audio mixing with Local (PortAudio) / UDP / WebSocket / Icecast outputs, the web UI (including
+  a settings page for editing channels/receivers/outputs).
+- **Deferred** (see below): SSB, P25 (conventional and trunked).
 
 ## Building
 
@@ -96,7 +97,25 @@ sudo apt-get install build-essential cmake pkg-config gnuradio-dev \
     libboost-dev libsqlite3-dev nlohmann-json3-dev portaudio19-dev \
     libsoapysdr-dev soapysdr-module-all soapysdr-module-rtlsdr rtl-sdr librtlsdr-dev \
     libyaml-cpp-dev libmp3lame-dev catch2
+```
 
+mbelib + DSDcc (DMR/P25 AMBE/IMBE decode - see "DMR/P25 digital decode" below) aren't in apt;
+build+install them from source once, same steps `Dockerfile` runs:
+
+```
+git clone --depth 1 https://github.com/f4exb/mbelib.git /tmp/mbelib
+cmake -S /tmp/mbelib -B /tmp/mbelib/build -DCMAKE_BUILD_TYPE=Release -DDISABLE_TEST=ON
+cmake --build /tmp/mbelib/build -j$(nproc) && sudo cmake --install /tmp/mbelib/build
+
+git clone --depth 1 https://github.com/f4exb/dsdcc.git /tmp/dsdcc
+cmake -S /tmp/dsdcc -B /tmp/dsdcc/build -DCMAKE_BUILD_TYPE=Release -DUSE_MBELIB=ON -DBUILD_TOOL=OFF
+cmake --build /tmp/dsdcc/build -j$(nproc) && sudo cmake --install /tmp/dsdcc/build
+sudo ldconfig
+```
+
+Then:
+
+```
 cmake -B build -DCMAKE_BUILD_TYPE=Release .
 cmake --build build -j$(nproc)
 ```
@@ -598,11 +617,14 @@ way upstream's `tunePause` is, since no hardware has needed that granularity yet
 - `PATCH /api/channels/{id}` - body may include any of: `squelchThreshold`,
   `squelchNoiseMargin_dB` (number or `null` to go back to a fixed `squelchThreshold` - see
   "Adaptive squelch" above), `noiseSquelchThreshold_dB` (number or `null` to disable - FM/NFM
-  only, see "FM noise squelch" above), `ctcssToneHz` (number or `null` to disable), `audioGain_dB`,
-  `dwellTime_s`, `mute`, `solo` (`true`/`false`/`null`), `hold`, `forceActive`, `enabled`,
-  `disableUntil` (unix seconds).
+  only, see "FM noise squelch" above), `ctcssToneHz` (number or `null` to disable), `dmrSlot`
+  (1 or 2 - DMR only, structural: rebuilds the window like `freq_hz`/`mode` - see "DMR/P25
+  digital decode" below), `dmrTalkgroupFilter` (number or `null` to unmute for any talkgroup -
+  DMR only, hot), `audioGain_dB`, `dwellTime_s`, `mute`, `solo` (`true`/`false`/`null`), `hold`,
+  `forceActive`, `enabled`, `disableUntil` (unix seconds).
 - `POST /api/channels` - body: `{freq_hz, label?, mode?, audioGain_dB?, dwellTime_s?,
-  squelchThreshold?, squelchNoiseMargin_dB?, noiseSquelchThreshold_dB?, ctcssToneHz?}` -> `{id}`.
+  squelchThreshold?, squelchNoiseMargin_dB?, noiseSquelchThreshold_dB?, ctcssToneHz?, dmrSlot?,
+  dmrTalkgroupFilter?}` -> `{id}`.
 - `DELETE /api/channels/{id}`
 - `PATCH /api/scanner` - body: `{maxChannelsPerWindow}`
 - `GET /api/receivers/scan` - enumerates connected SDR hardware (`SoapySDR::Device::enumerate()`
@@ -616,7 +638,8 @@ way upstream's `tunePause` is, since no hardware has needed that granularity yet
 Accepts the same control messages as the REST PATCH fields, as `{"type": "...", "data": {...}}`
 - e.g. `ChannelMute`, `ChannelHold`, `ChannelSolo`, `ChannelEnable`, `ChannelDisableUntil`,
 `ChannelForceActive`, `ChannelSetSquelch`, `ChannelSetSquelchNoiseMargin`,
-`ChannelSetNoiseSquelchThreshold`, `ChannelSetCtcss`, `ChannelSetAudioGain`, `ChannelSetDwellTime`.
+`ChannelSetNoiseSquelchThreshold`, `ChannelSetCtcss`, `ChannelSetDmrTalkgroupFilter`,
+`ChannelSetAudioGain`, `ChannelSetDwellTime`.
 Also accepts `Ping` (empty `data`), which does nothing besides getting the usual `Ack` back - a
 periodic client-side keepalive (`app.js`'s `connectWS()`, every 20s) exists because the control
 connection otherwise sits idle between actual config/status changes, which on real hardware was
@@ -629,14 +652,77 @@ Note: the Python web UI had grown a PIN-based "listen only vs. control" access g
 control the scanner. If you need that back, it'd be a reasonable addition to `HttpServer`, or
 handle it at a reverse-proxy layer in front of this.
 
+## DMR/P25 digital decode
+
+AMBE/IMBE voice decode goes through **DSDcc** (`f4exb/dsdcc`), a C++11 library wrapping
+**mbelib** (`f4exb/mbelib`) that adds DMR/P25 Phase 1 frame sync/deframing on top - the same
+reverse-engineered codec family OpenWebRX+'s digiham and SDRTrunk's jmbe use, run entirely in
+software (no AMBE hardware dongle). Neither library is packaged in apt; `Dockerfile` builds both
+from source before the main (apt-only) build stage - see "Local (fast dev loop)" above for the
+equivalent manual steps.
+
+**Architecture**: `ChannelBlockDMR` (`src/dsp/ChannelBlockDMR.{h,cpp}`) channelizes the shared
+window RF input down to a 48kHz discriminator stream (C4FM/4FSK quadrature demod, same technique
+`ChannelBlockFM` uses for analog FM - no de-emphasis/CTCSS, those are FM-broadcast-specific) and
+feeds it sample-by-sample into `DsdccDecodeBlock` (`src/dsp/DsdccDecodeBlock.{h,cpp}`), a thin
+GNU Radio wrapper around `DSDcc::DSDDecoder` that polls its decoded-audio output each `work()`
+call (decoded audio arrives from mbelib in bursts once DSDcc syncs to a frame, not at a fixed
+rate relative to the 48kHz input - `DsdccDecodeBlock` is a `gr::block`, not `gr::sync_block`, for
+exactly this reason).
+
+**DMR is dual-timeslot**: TS1/TS2 are configured as two independent `ChannelConfig` rows at the
+same `freq_hz` (own mute/hold/status/talkgroup filter per slot - see `dmrSlot`/
+`dmrTalkgroupFilter` below), sharing one underlying C4FM front end + `DSDDecoder` instance rather
+than each independently demodulating the same RF (DSDcc already decodes both TDMA slots from one
+input - `getAudio1()`/`getAudio2()`). Whichever slot's `ChannelBlockDMR` is constructed first for
+a frequency (`ScanWindow::buildChannelBlock`'s `freq_hz`-keyed lookup) builds the real front end/
+decoder; the second one discards its own copy of the window's RF stream into a `null_sink` (GNU
+Radio requires every `hier_block2` boundary port connected internally) and taps the shared
+decoder's other output port instead - validated as a supported GNU Radio pattern (a plain
+`gr::block`, unlike a `gr::hier_block2`, can be connected to from two independent parent
+`hier_block2`s) with a standalone synthetic flowgraph before committing to this design.
+
+**Config**: `ChannelMode::DMR`, plus DMR-only `ChannelConfig` fields `dmrSlot` (1 or 2 - which
+timeslot; **structural**, since changing it changes the block's port wiring/owner-vs-shared-tap
+role, so it goes through the same window rebuild as `freq_hz`/`mode`, not a hot setter) and
+`dmrTalkgroupFilter` (optional talkgroup ID allow-list of one - unset unmutes for any talkgroup
+on that slot; hot-settable via `PATCH`/`ChannelSetDmrTalkgroupFilter`). DMR channels require the
+window's RF sample rate to be a whole multiple of 48000Hz (e.g. RTL-SDR's 2.4Msps rate divides
+evenly; throws otherwise) - `ChannelBlockDMR` doesn't resample the RF side, only the mbelib
+8kHz-decoded audio side, down/up to the window's audio rate.
+
+**Known caveats** (unverified against real DMR/P25 RF - no SDR hardware or signal generator
+available in the sandbox this was built in):
+- The C4FM discriminator gain assumes a DMR peak deviation of 1944Hz (`kDmrPeakDeviationHz` in
+  `ChannelBlockDMR.cpp`) and a fixed int16 scale factor feeding `DSDDecoder::run()`
+  (`DsdccDecodeBlock.cpp`) - DSDcc's symbol-level tracking auto-adapts rather than needing exact
+  calibration, but both are flagged for real-world tuning if decode quality is poor.
+- Upstream DSDcc's `DSDDecoder::getOpts()`/`getState()` are commented out, and `DSDDMR` only
+  exposes the decoded talkgroup as formatted text (`getSlot0Text()`/`getSlot1Text()`), not a
+  queryable numeric field - `dmrTalkgroupFilter` parses it back out of that text (see
+  `ChannelBlockDMR::currentTalkgroup()`). A small vendored patch (uncommenting those getters,
+  exposing the target address directly) would be more robust if DSDcc gets version-bumped later.
+- Real DMR decode correctness (does audio actually come out right) needs a captured IQ recording
+  or real hardware to verify - `tests/test_channel_dmr.cpp` covers the shared-decoder wiring,
+  slot independence, and that the flowgraph runs against noise without crashing, not audio
+  correctness.
+
 ## Explicitly deferred
 
 - **SSB channel mode** - same `ChannelBlockBase` extension point as
   `ChannelBlockFM`/`ChannelBlockAM`/`ChannelBlockEAS`; a straightforward follow-up.
 - **wxPython GUI** - dropped in favor of the web UI (the Python repo's own README already
   listed this as a TODO).
-- **DMR/P25** - per the original request, deferred entirely. If tackled later, realistically
-  means shelling out to an existing decoder (OP25/DSDcc) rather than reimplementing AMBE.
+- **P25 Phase 1 (conventional)** - same DSDcc/mbelib path as DMR (see "DMR/P25 digital decode"
+  above) with `setDecodeMode(DSDDecodeP25P1, true)` instead, one audio stream (no timeslot
+  split) - a straightforward follow-up on top of `ChannelBlockDMR`'s plumbing.
+- **P25 Phase 1 trunking** (e.g. a county-wide trunked system) - the substantially bigger lift:
+  DSDcc has no TSBK/MBT trunking decode at all (only post-sync voice-frame heuristics), so
+  following a control channel (channel grants, `IDEN_UP` frequency-band table) needs a
+  standalone decoder with no library shortcut, plus a new receiver-role concept (one receiver
+  pinned to the control channel, another preemptable from normal conventional scanning onto a
+  voice grant) - `Scanner::buildWindows()`/`getNextScanWindowId()` have no notion of either
+  today. Deferred entirely for now.
 - **Per-client control PIN/role gate** - see note above.
 
 ## Testing without SDR hardware

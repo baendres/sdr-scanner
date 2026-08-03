@@ -83,6 +83,10 @@ public:
     // whenever the noise floor estimate updates (see onNoiseFloorUpdated()).
     virtual void setSquelchNoiseMargin(std::optional<double> /*marginDb*/) {}
 
+    // DMR only; no-op by default (same reasoning as setCtcssTone - only ChannelBlockDMR has a
+    // meaningful implementation).
+    virtual void setDmrTalkgroupFilter(std::optional<uint32_t> /*talkgroupFilter*/) {}
+
     // Recomputes + reports (if changed) the channel's status; must be called periodically
     // (the Scanner polls this while a ScanWindow is running).
     virtual ChannelStatus getStatus() = 0;

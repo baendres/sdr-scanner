@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS channels (
     ctcss_tone_hz     REAL,                          -- NULL = disabled (power-squelch only)
     squelch_noise_margin_db REAL,                    -- NULL = fixed squelch_threshold; set = adaptive (noise floor + margin)
     noise_squelch_threshold_db REAL,                 -- NULL = disabled; set = FM-only reference-band ("hiss") gate
+    dmr_slot          INTEGER,                       -- DMR only: 1 or 2 (dual-timeslot repeaters - see native/README.md)
+    dmr_talkgroup_filter INTEGER,                    -- DMR only: NULL = unmute for any talkgroup on this slot
     enabled           INTEGER NOT NULL DEFAULT 1,
     disable_until     REAL,
     mute              INTEGER NOT NULL DEFAULT 0,

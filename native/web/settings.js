@@ -40,7 +40,7 @@ function el(tag, attrs, children) {
 function renderChannelRow(cc) {
   const label = el("input", { type: "text", value: cc.label });
   const freq = el("input", { type: "number", step: "0.001", value: (cc.freq_hz / 1e6).toString() });
-  const mode = el("select", {}, ["FM", "NFM", "AM", "NOAA", "BFM_EAS"].map(m => el("option", { value: m, text: m, selected: m === cc.mode })));
+  const mode = el("select", {}, ["FM", "NFM", "AM", "NOAA", "BFM_EAS", "DMR"].map(m => el("option", { value: m, text: m, selected: m === cc.mode })));
   const squelch = el("input", { type: "number", step: "1", value: cc.squelchThreshold });
   const squelchMargin = el("input", {
     type: "number", step: "1",
@@ -55,6 +55,18 @@ function renderChannelRow(cc) {
     title: "FM/NFM only: also requires the demodulated hiss above 4-7kHz to drop below this level to unmute",
   });
   const ctcss = el("input", { type: "number", step: "0.1", value: cc.ctcssToneHz != null ? cc.ctcssToneHz : "", placeholder: "off" });
+  const dmrSlot = el("input", {
+    type: "number", step: "1", min: "1", max: "2",
+    value: cc.dmrSlot != null ? cc.dmrSlot : "",
+    placeholder: "1 or 2",
+    title: "DMR only: which repeater timeslot this channel decodes",
+  });
+  const dmrTalkgroup = el("input", {
+    type: "number", step: "1", min: "0",
+    value: cc.dmrTalkgroupFilter != null ? cc.dmrTalkgroupFilter : "",
+    placeholder: "any",
+    title: "DMR only: only unmute for this talkgroup ID; blank = any talkgroup on this slot",
+  });
   const gain = el("input", { type: "number", step: "1", value: cc.audioGain_dB });
   const dwell = el("input", { type: "number", step: "0.5", value: cc.dwellTime_s });
   const enabled = el("input", { type: "checkbox", checked: cc.enabled });
@@ -71,6 +83,8 @@ function renderChannelRow(cc) {
         squelchNoiseMargin_dB: squelchMargin.value === "" ? null : parseFloat(squelchMargin.value),
         noiseSquelchThreshold_dB: noiseSquelch.value === "" ? null : parseFloat(noiseSquelch.value),
         ctcssToneHz: ctcss.value === "" ? null : parseFloat(ctcss.value),
+        dmrSlot: dmrSlot.value === "" ? null : parseInt(dmrSlot.value, 10),
+        dmrTalkgroupFilter: dmrTalkgroup.value === "" ? null : parseInt(dmrTalkgroup.value, 10),
         audioGain_dB: parseFloat(gain.value),
         dwellTime_s: parseFloat(dwell.value),
         enabled: enabled.checked,
@@ -98,6 +112,8 @@ function renderChannelRow(cc) {
     el("td", {}, [squelchMargin]),
     el("td", {}, [noiseSquelch]),
     el("td", {}, [ctcss]),
+    el("td", {}, [dmrSlot]),
+    el("td", {}, [dmrTalkgroup]),
     el("td", {}, [gain]),
     el("td", {}, [dwell]),
     el("td", {}, [enabled]),
@@ -111,6 +127,8 @@ async function addChannel() {
   const ctcssStr = document.getElementById("newChCtcss").value;
   const squelchMarginStr = document.getElementById("newChSquelchMargin").value;
   const noiseSquelchStr = document.getElementById("newChNoiseSquelch").value;
+  const dmrSlotStr = document.getElementById("newChDmrSlot").value;
+  const dmrTalkgroupStr = document.getElementById("newChDmrTalkgroup").value;
   try {
     await api("POST", "/api/channels", {
       label: document.getElementById("newChLabel").value || undefined,
@@ -120,6 +138,8 @@ async function addChannel() {
       squelchNoiseMargin_dB: squelchMarginStr === "" ? null : parseFloat(squelchMarginStr),
       noiseSquelchThreshold_dB: noiseSquelchStr === "" ? null : parseFloat(noiseSquelchStr),
       ctcssToneHz: ctcssStr === "" ? null : parseFloat(ctcssStr),
+      dmrSlot: dmrSlotStr === "" ? null : parseInt(dmrSlotStr, 10),
+      dmrTalkgroupFilter: dmrTalkgroupStr === "" ? null : parseInt(dmrTalkgroupStr, 10),
       audioGain_dB: parseFloat(document.getElementById("newChGain").value),
       dwellTime_s: parseFloat(document.getElementById("newChDwell").value),
     });
@@ -128,6 +148,8 @@ async function addChannel() {
     document.getElementById("newChSquelchMargin").value = "";
     document.getElementById("newChNoiseSquelch").value = "";
     document.getElementById("newChCtcss").value = "";
+    document.getElementById("newChDmrSlot").value = "";
+    document.getElementById("newChDmrTalkgroup").value = "";
     log("added channel");
     await loadAll();
   } catch (e) { log(`add channel failed: ${e.message}`); }

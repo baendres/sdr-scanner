@@ -15,6 +15,7 @@ enum class ChannelMode {
     AM,
     NOAA,     // NOAA weather radio SAME/EAS attention tone (1050 Hz) on narrowband FM
     BFM_EAS,  // Broadcast EAS two-tone attention signal (853/960 Hz) on wideband FM
+    DMR,      // Conventional (non-trunked) DMR, one timeslot per ChannelConfig - see dmrSlot
 };
 
 std::string channelModeToString(ChannelMode mode);
@@ -80,6 +81,21 @@ struct ChannelConfig {
     // only (no capture effect on AM); unset = today's power-squelch-only behavior. See
     // ChannelBlockFM's noise squelch chain.
     std::optional<double> noiseSquelchThreshold_dB;
+
+    // DMR only. DMR repeaters are dual-timeslot (TS1/TS2 can carry two independent simultaneous
+    // calls on one frequency) - each timeslot is its own ChannelConfig row at the same freq_hz,
+    // with its own mute/hold/status, sharing one underlying C4FM demod + DSDcc decoder instance
+    // (see ScanWindow::buildChannelBlock()). 1 or 2; unset is invalid for ChannelMode::DMR.
+    std::optional<int> dmrSlot;
+    // DMR only. Unset = unmute for any talkgroup heard on this slot. When set, audio only
+    // unmutes for calls addressed to this talkgroup ID. NOTE: upstream DSDcc's DSDDMR only
+    // exposes the decoded target/source address as a formatted human-readable string
+    // (getSlot0Text()/getSlot1Text()), not a queryable numeric field (m_slot1Addresses.m_target
+    // etc. are private) - same "needs a small vendored patch" situation as
+    // DSDDecoder::getOpts()/getState() (see native/README.md). ChannelBlockDMR parses the
+    // talkgroup number back out of that text as a stopgap; a patch to expose it directly would
+    // be more robust if DSDcc gets bumped later.
+    std::optional<uint32_t> dmrTalkgroupFilter;
 
     bool enabled = true;
     std::optional<double> disableUntil; // unix time

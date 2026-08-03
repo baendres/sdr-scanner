@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS channels (
     ctcss_tone_hz     REAL,
     squelch_noise_margin_db REAL,
     noise_squelch_threshold_db REAL,
+    dmr_slot          INTEGER,
+    dmr_talkgroup_filter INTEGER,
     enabled           INTEGER NOT NULL DEFAULT 1,
     disable_until     REAL,
     mute              INTEGER NOT NULL DEFAULT 0,
@@ -105,6 +107,13 @@ public:
         if (sqlite3_column_type(stmt_, idx) == SQLITE_NULL) return std::nullopt;
         return colInt(idx) != 0;
     }
+    std::optional<int64_t> colNullableInt64(int idx) const {
+        if (sqlite3_column_type(stmt_, idx) == SQLITE_NULL) return std::nullopt;
+        return colInt64(idx);
+    }
+    void bindNullableInt64(int idx, const std::optional<int64_t>& v) {
+        if (v) bindInt64(idx, *v); else sqlite3_bind_null(stmt_, idx);
+    }
 
 private:
     sqlite3_stmt* stmt_ = nullptr;
@@ -153,6 +162,12 @@ void Database::initSchema() {
     }
     if (!columnExists(db_, "channels", "noise_squelch_threshold_db")) {
         exec("ALTER TABLE channels ADD COLUMN noise_squelch_threshold_db REAL");
+    }
+    if (!columnExists(db_, "channels", "dmr_slot")) {
+        exec("ALTER TABLE channels ADD COLUMN dmr_slot INTEGER");
+    }
+    if (!columnExists(db_, "channels", "dmr_talkgroup_filter")) {
+        exec("ALTER TABLE channels ADD COLUMN dmr_talkgroup_filter INTEGER");
     }
 }
 
@@ -208,12 +223,14 @@ ChannelConfig rowToChannel(const Stmt& s) {
     cc.ctcssToneHz = s.colNullableDouble(7);
     cc.squelchNoiseMargin_dB = s.colNullableDouble(8);
     cc.noiseSquelchThreshold_dB = s.colNullableDouble(9);
-    cc.enabled = s.colInt(10) != 0;
-    cc.disableUntil = s.colNullableDouble(11);
-    cc.mute = s.colInt(12) != 0;
-    cc.solo = s.colNullableBool(13);
-    cc.hold = s.colInt(14) != 0;
-    cc.sortOrder = s.colInt(15);
+    if (auto slot = s.colNullableInt64(10)) cc.dmrSlot = static_cast<int>(*slot);
+    if (auto tg = s.colNullableInt64(11)) cc.dmrTalkgroupFilter = static_cast<uint32_t>(*tg);
+    cc.enabled = s.colInt(12) != 0;
+    cc.disableUntil = s.colNullableDouble(13);
+    cc.mute = s.colInt(14) != 0;
+    cc.solo = s.colNullableBool(15);
+    cc.hold = s.colInt(16) != 0;
+    cc.sortOrder = s.colInt(17);
     return cc;
 }
 } // namespace
@@ -222,7 +239,8 @@ std::vector<ChannelConfig> Database::listChannels() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<ChannelConfig> out;
     Stmt s(db_, "SELECT id, freq_hz, label, mode, audio_gain_db, dwell_time_s, squelch_threshold, "
-                "ctcss_tone_hz, squelch_noise_margin_db, noise_squelch_threshold_db, enabled, "
+                "ctcss_tone_hz, squelch_noise_margin_db, noise_squelch_threshold_db, "
+                "dmr_slot, dmr_talkgroup_filter, enabled, "
                 "disable_until, mute, solo, hold, sort_order "
                 "FROM channels ORDER BY sort_order, freq_hz");
     while (s.step()) out.push_back(rowToChannel(s));
@@ -233,14 +251,15 @@ void Database::upsertChannel(const ChannelConfig& cc) {
     std::lock_guard<std::mutex> lock(mutex_);
     Stmt s(db_,
         "INSERT INTO channels(id, freq_hz, label, mode, audio_gain_db, dwell_time_s, squelch_threshold, "
-        "ctcss_tone_hz, squelch_noise_margin_db, noise_squelch_threshold_db, enabled, disable_until, "
-        "mute, solo, hold, sort_order) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ctcss_tone_hz, squelch_noise_margin_db, noise_squelch_threshold_db, dmr_slot, dmr_talkgroup_filter, "
+        "enabled, disable_until, mute, solo, hold, sort_order) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET freq_hz=excluded.freq_hz, label=excluded.label, mode=excluded.mode, "
         "audio_gain_db=excluded.audio_gain_db, dwell_time_s=excluded.dwell_time_s, "
         "squelch_threshold=excluded.squelch_threshold, ctcss_tone_hz=excluded.ctcss_tone_hz, "
         "squelch_noise_margin_db=excluded.squelch_noise_margin_db, "
         "noise_squelch_threshold_db=excluded.noise_squelch_threshold_db, "
+        "dmr_slot=excluded.dmr_slot, dmr_talkgroup_filter=excluded.dmr_talkgroup_filter, "
         "enabled=excluded.enabled, disable_until=excluded.disable_until, mute=excluded.mute, "
         "solo=excluded.solo, hold=excluded.hold, sort_order=excluded.sort_order");
     s.bindText(1, cc.id);
@@ -253,12 +272,14 @@ void Database::upsertChannel(const ChannelConfig& cc) {
     s.bindNullableDouble(8, cc.ctcssToneHz);
     s.bindNullableDouble(9, cc.squelchNoiseMargin_dB);
     s.bindNullableDouble(10, cc.noiseSquelchThreshold_dB);
-    s.bindInt(11, cc.enabled ? 1 : 0);
-    s.bindNullableDouble(12, cc.disableUntil);
-    s.bindInt(13, cc.mute ? 1 : 0);
-    if (cc.solo.has_value()) s.bindInt(14, *cc.solo ? 1 : 0); else s.bindNull(14);
-    s.bindInt(15, cc.hold ? 1 : 0);
-    s.bindInt(16, cc.sortOrder);
+    s.bindNullableInt64(11, cc.dmrSlot ? std::optional<int64_t>(*cc.dmrSlot) : std::nullopt);
+    s.bindNullableInt64(12, cc.dmrTalkgroupFilter ? std::optional<int64_t>(*cc.dmrTalkgroupFilter) : std::nullopt);
+    s.bindInt(13, cc.enabled ? 1 : 0);
+    s.bindNullableDouble(14, cc.disableUntil);
+    s.bindInt(15, cc.mute ? 1 : 0);
+    if (cc.solo.has_value()) s.bindInt(16, *cc.solo ? 1 : 0); else s.bindNull(16);
+    s.bindInt(17, cc.hold ? 1 : 0);
+    s.bindInt(18, cc.sortOrder);
     s.step();
 }
 

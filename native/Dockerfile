@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # apt repo ships a recent-enough gnuradio-dev package with the C++ headers/libs we need -
 # no source build required, which makes this image much faster to build.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake pkg-config \
+    build-essential cmake pkg-config git \
     gnuradio-dev \
     libvolk-bin \
     libboost-dev libboost-system-dev \
@@ -19,6 +19,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmp3lame-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# mbelib + DSDcc: neither is packaged in Ubuntu 24.04's apt repo. DSDcc (f4exb/dsdcc) wraps
+# mbelib (f4exb/mbelib) to add DMR/P25 Phase 1 frame sync/deframing on top of its AMBE/IMBE
+# decode - the same reverse-engineered codec family OpenWebRX+'s digiham and SDRTrunk's jmbe
+# use, run entirely in software (no AMBE hardware dongle). See native/README.md for the
+# DSDDecoder::getOpts()/getState() vendored-patch caveat if bumping either dependency's version.
+RUN git clone --depth 1 https://github.com/f4exb/mbelib.git /tmp/mbelib \
+    && cmake -S /tmp/mbelib -B /tmp/mbelib/build -DCMAKE_BUILD_TYPE=Release -DDISABLE_TEST=ON \
+    && cmake --build /tmp/mbelib/build -j"$(nproc)" \
+    && cmake --install /tmp/mbelib/build \
+    && git clone --depth 1 https://github.com/f4exb/dsdcc.git /tmp/dsdcc \
+    && cmake -S /tmp/dsdcc -B /tmp/dsdcc/build -DCMAKE_BUILD_TYPE=Release -DUSE_MBELIB=ON -DBUILD_TOOL=OFF \
+    && cmake --build /tmp/dsdcc/build -j"$(nproc)" \
+    && cmake --install /tmp/dsdcc/build \
+    && ldconfig \
+    && rm -rf /tmp/mbelib /tmp/dsdcc
 
 WORKDIR /app
 COPY . .

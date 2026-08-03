@@ -3,22 +3,31 @@
 #include "ChannelBlockFM.h"
 #include "ChannelBlockAM.h"
 #include "ChannelBlockEAS.h"
+#include "ChannelBlockDMR.h"
 #include "../util/Uuid.h"
 
 #include <gnuradio/filter/firdes.h>
 #include <gnuradio/sptr_magic.h>
 
 #include <algorithm>
+#include <map>
 #include <stdexcept>
 
 namespace sdrscan {
 
 namespace {
 
+// DMR-only: TS1/TS2 channels at the same freq_hz share one C4FM front end + DSDcc decoder (see
+// ChannelBlockDMR's header) - keyed here across the loop in ScanWindow::ScanWindow() so the
+// second slot's ChannelBlockDMR can be handed the first's decodeBlock() instead of building its
+// own.
+using DmrDecodersByFreq = std::map<int64_t, std::shared_ptr<DsdccDecodeBlock>>;
+
 std::shared_ptr<ChannelBlockBase> buildChannelBlock(const ChannelConfig& cc,
                                                       int64_t hardwareFreq_hz,
                                                       int rfSampleRate,
                                                       int audioSampleRate,
+                                                      DmrDecodersByFreq& dmrDecodersByFreq,
                                                       std::function<void(ChannelStatusUpdate)> statusCallback) {
     std::shared_ptr<ChannelBlockBase> block;
     switch (cc.mode) {
@@ -52,6 +61,21 @@ std::shared_ptr<ChannelBlockBase> buildChannelBlock(const ChannelConfig& cc,
                 /*deviation_hz=*/75000, /*alertTonesHz=*/std::vector<double>{853.0, 960.0},
                 cc.squelchNoiseMargin_dB, statusCallback);
             break;
+        case ChannelMode::DMR: {
+            if (!cc.dmrSlot.has_value()) {
+                throw std::runtime_error("buildChannelBlock: DMR channel missing dmrSlot");
+            }
+            auto it = dmrDecodersByFreq.find(cc.freq_hz);
+            std::shared_ptr<DsdccDecodeBlock> existingDecodeBlock =
+                (it != dmrDecodersByFreq.end()) ? it->second : nullptr;
+            auto dmrBlock = gnuradio::make_block_sptr<ChannelBlockDMR>(
+                cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.audioGain_dB, cc.dwellTime_s,
+                cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate, *cc.dmrSlot,
+                cc.dmrTalkgroupFilter, existingDecodeBlock, statusCallback);
+            dmrDecodersByFreq[cc.freq_hz] = dmrBlock->decodeBlock();
+            block = dmrBlock;
+            break;
+        }
         default:
             throw std::runtime_error("buildChannelBlock: unhandled ChannelMode");
     }
@@ -114,8 +138,10 @@ ScanWindow::ScanWindow(const ScanWindowConfig& config,
       rfSampleRate_(rfSampleRate),
       audioSampleRate_(selectAudioSampleRate(rfSampleRate)) {
 
+    DmrDecodersByFreq dmrDecodersByFreq;
     for (const auto& cc : config.channelConfigs) {
-        channels_.push_back(buildChannelBlock(cc, hardwareFreq_hz_, rfSampleRate_, audioSampleRate_, statusCallback));
+        channels_.push_back(buildChannelBlock(cc, hardwareFreq_hz_, rfSampleRate_, audioSampleRate_,
+                                                dmrDecodersByFreq, statusCallback));
     }
 
     scanWindowBlock_ = gnuradio::make_block_sptr<ScanWindowBlock>(channels_, audioSampleRate_, AUDIO_SAMPLERATE);

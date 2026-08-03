@@ -52,6 +52,8 @@ inline json channelConfigToJson(const ChannelConfig& cc) {
         {"ctcssToneHz", cc.ctcssToneHz.has_value() ? json(*cc.ctcssToneHz) : json(nullptr)},
         {"squelchNoiseMargin_dB", cc.squelchNoiseMargin_dB.has_value() ? json(*cc.squelchNoiseMargin_dB) : json(nullptr)},
         {"noiseSquelchThreshold_dB", cc.noiseSquelchThreshold_dB.has_value() ? json(*cc.noiseSquelchThreshold_dB) : json(nullptr)},
+        {"dmrSlot", cc.dmrSlot.has_value() ? json(*cc.dmrSlot) : json(nullptr)},
+        {"dmrTalkgroupFilter", cc.dmrTalkgroupFilter.has_value() ? json(*cc.dmrTalkgroupFilter) : json(nullptr)},
         {"enabled", cc.enabled},
         {"disableUntil", cc.disableUntil.has_value() ? json(*cc.disableUntil) : json(nullptr)},
         {"mute", cc.mute},
@@ -156,6 +158,12 @@ inline ChannelConfig channelConfigFromJson(const json& j) {
     }
     if (j.contains("noiseSquelchThreshold_dB") && !j.at("noiseSquelchThreshold_dB").is_null()) {
         cc.noiseSquelchThreshold_dB = j.at("noiseSquelchThreshold_dB").get<double>();
+    }
+    if (j.contains("dmrSlot") && !j.at("dmrSlot").is_null()) {
+        cc.dmrSlot = j.at("dmrSlot").get<int>();
+    }
+    if (j.contains("dmrTalkgroupFilter") && !j.at("dmrTalkgroupFilter").is_null()) {
+        cc.dmrTalkgroupFilter = j.at("dmrTalkgroupFilter").get<uint32_t>();
     }
     return cc;
 }

@@ -69,6 +69,9 @@ public:
     void setChannelCtcssTone(const std::string& channelId, std::optional<double> toneHz);
     void setChannelSquelchNoiseMargin(const std::string& channelId, std::optional<double> marginDb);
     void setChannelNoiseSquelchThreshold(const std::string& channelId, std::optional<double> thresholdDb);
+    // DMR only; no-op on other channel modes (ChannelBlockBase::setDmrTalkgroupFilter defaults
+    // to a no-op, same pattern as setCtcssTone). dmrSlot itself is structural - see editChannel.
+    void setChannelDmrTalkgroupFilter(const std::string& channelId, std::optional<uint32_t> talkgroupFilter);
     void setChannelAudioGain(const std::string& channelId, double audioGain_dB);
     void setChannelDwellTime(const std::string& channelId, double dwellTime_s);
     void setChannelMute(const std::string& channelId, bool mute);

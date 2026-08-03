@@ -28,6 +28,8 @@ TEST_CASE("Database persists channel config across reopen") {
     cc.ctcssToneHz = 100.0;
     cc.squelchNoiseMargin_dB = 8.0;
     cc.noiseSquelchThreshold_dB = 12.0;
+    cc.dmrSlot = 2;
+    cc.dmrTalkgroupFilter = 31337;
     cc.dwellTime_s = 4.5;
     cc.audioGain_dB = 3.0;
     cc.mute = true;
@@ -59,6 +61,10 @@ TEST_CASE("Database persists channel config across reopen") {
         CHECK(*loaded.squelchNoiseMargin_dB == cc.squelchNoiseMargin_dB);
         REQUIRE(loaded.noiseSquelchThreshold_dB.has_value());
         CHECK(*loaded.noiseSquelchThreshold_dB == cc.noiseSquelchThreshold_dB);
+        REQUIRE(loaded.dmrSlot.has_value());
+        CHECK(*loaded.dmrSlot == cc.dmrSlot);
+        REQUIRE(loaded.dmrTalkgroupFilter.has_value());
+        CHECK(*loaded.dmrTalkgroupFilter == cc.dmrTalkgroupFilter);
         CHECK(loaded.dwellTime_s == cc.dwellTime_s);
         CHECK(loaded.mute == true);
         REQUIRE(loaded.solo.has_value());

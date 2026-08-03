@@ -33,6 +33,8 @@
               <th title="When set, overrides Squelch: the channel's threshold tracks its live noise floor plus this margin instead of a fixed value">Adaptive Margin (dB)</th>
               <th title="FM/NFM only: also requires the demodulated hiss above 4-7kHz to drop below this level to unmute, to reject broadband noise bursts that clear the power squelch but never capture the FM carrier">Noise Squelch (dB)</th>
               <th>CTCSS (Hz)</th>
+              <th title="DMR only: which repeater timeslot this channel decodes (1 or 2)">DMR Slot</th>
+              <th title="DMR only: only unmute for this talkgroup ID; blank = any talkgroup on this slot">DMR Talkgroup</th>
               <th>Audio Gain (dB)</th>
               <th>Dwell (s)</th>
               <th>Enabled</th>
@@ -51,12 +53,15 @@
                   <option value="AM">AM</option>
                   <option value="NOAA">NOAA</option>
                   <option value="BFM_EAS">BFM_EAS</option>
+                  <option value="DMR">DMR</option>
                 </select>
               </td>
               <td><input type="number" id="newChSquelch" step="1" value="-55" /></td>
               <td><input type="number" id="newChSquelchMargin" step="1" placeholder="off" /></td>
               <td><input type="number" id="newChNoiseSquelch" step="1" placeholder="off" /></td>
               <td><input type="number" id="newChCtcss" step="0.1" placeholder="off" /></td>
+              <td><input type="number" id="newChDmrSlot" step="1" min="1" max="2" placeholder="1 or 2" /></td>
+              <td><input type="number" id="newChDmrTalkgroup" step="1" min="0" placeholder="any" /></td>
               <td><input type="number" id="newChGain" step="1" value="0" /></td>
               <td><input type="number" id="newChDwell" step="0.5" value="3" /></td>
               <td><input type="checkbox" id="newChEnabled" checked /></td>

@@ -399,7 +399,7 @@ void HttpServer::applyChannelPatchFields(const std::string& channelId, const jso
     // Structural fields need a full-record edit + window rebuild rather than a per-field "hot"
     // setter. Applied first from the pre-patch snapshot so any hot fields also present in the
     // same PATCH body still win below (they're applied after, straight to the live block).
-    if (body.contains("freq_hz") || body.contains("label") || body.contains("mode")) {
+    if (body.contains("freq_hz") || body.contains("label") || body.contains("mode") || body.contains("dmrSlot")) {
         auto snapshot = scanner_.getSnapshot();
         auto it = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
                                 [&](const ChannelConfig& cc) { return cc.id == channelId; });
@@ -411,6 +411,13 @@ void HttpServer::applyChannelPatchFields(const std::string& channelId, const jso
             auto mode = channelModeFromString(body.at("mode").get<std::string>());
             if (!mode) throw std::runtime_error("Unknown channel mode");
             cc.mode = *mode;
+        }
+        // Structural, not a hot setter - changing which timeslot a DMR channel decodes changes
+        // its port wiring and possibly its owner/shared-tap role (see ChannelBlockDMR.h), so it
+        // needs the same full window rebuild as freq_hz/mode.
+        if (body.contains("dmrSlot")) {
+            auto v = body.at("dmrSlot");
+            cc.dmrSlot = v.is_null() ? std::nullopt : std::optional<int>(v.get<int>());
         }
         scanner_.editChannel(cc);
     }
@@ -427,6 +434,10 @@ void HttpServer::applyChannelPatchFields(const std::string& channelId, const jso
     if (body.contains("noiseSquelchThreshold_dB")) {
         auto v = body.at("noiseSquelchThreshold_dB");
         scanner_.setChannelNoiseSquelchThreshold(channelId, v.is_null() ? std::nullopt : std::optional<double>(v.get<double>()));
+    }
+    if (body.contains("dmrTalkgroupFilter")) {
+        auto v = body.at("dmrTalkgroupFilter");
+        scanner_.setChannelDmrTalkgroupFilter(channelId, v.is_null() ? std::nullopt : std::optional<uint32_t>(v.get<uint32_t>()));
     }
     if (body.contains("audioGain_dB")) scanner_.setChannelAudioGain(channelId, body.at("audioGain_dB").get<double>());
     if (body.contains("dwellTime_s")) scanner_.setChannelDwellTime(channelId, body.at("dwellTime_s").get<double>());
@@ -583,6 +594,9 @@ void HttpServer::handleWsMessage(const std::shared_ptr<WsClient>& client, const 
             scanner_.setChannelAudioGain(data.at("id").get<std::string>(), data.at("audioGain_dB").get<double>());
         } else if (type == "ChannelSetDwellTime") {
             scanner_.setChannelDwellTime(data.at("id").get<std::string>(), data.at("dwellTime_s").get<double>());
+        } else if (type == "ChannelSetDmrTalkgroupFilter") {
+            auto v = data.at("dmrTalkgroupFilter");
+            scanner_.setChannelDmrTalkgroupFilter(data.at("id").get<std::string>(), v.is_null() ? std::nullopt : std::optional<uint32_t>(v.get<uint32_t>()));
         } else {
             sendToClient(client, json{{"type", "Error"}, {"data", {{"error", "unknown type"}, {"messageType", type}}}});
             return;

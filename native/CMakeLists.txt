@@ -23,6 +23,18 @@ if(NOT MP3LAME_INCLUDE_DIR OR NOT MP3LAME_LIBRARY)
     message(FATAL_ERROR "libmp3lame not found (needed for the Icecast audio output) - apt install libmp3lame-dev")
 endif()
 
+# DSDcc (DMR/P25p1 frame sync + AMBE/IMBE decode, wrapping mbelib) - not packaged in apt, built
+# from source in native/Dockerfile / by the developer locally (see native/README.md). DSDcc's own
+# CMake build generates a real libdsdcc.pc, so it's pkg-config-discoverable once installed.
+pkg_check_modules(DSDCC REQUIRED libdsdcc)
+
+# mbelib ships no pkg-config file (same situation as libmp3lame above), so find it manually.
+find_path(MBE_INCLUDE_DIR NAMES mbelib.h)
+find_library(MBE_LIBRARY NAMES mbe)
+if(NOT MBE_INCLUDE_DIR OR NOT MBE_LIBRARY)
+    message(FATAL_ERROR "mbelib not found (needed for DMR/P25 AMBE decode) - build+install f4exb/mbelib, see native/README.md")
+endif()
+
 set(GNURADIO_LIBS
     gnuradio::gnuradio-runtime
     gnuradio::gnuradio-analog
@@ -44,6 +56,8 @@ add_library(sdrscan_core STATIC
     src/dsp/ChannelBlockFM.cpp
     src/dsp/ChannelBlockAM.cpp
     src/dsp/ChannelBlockEAS.cpp
+    src/dsp/ChannelBlockDMR.cpp
+    src/dsp/DsdccDecodeBlock.cpp
     src/dsp/ScanWindow.cpp
     src/receiver/SoapyReceiver.cpp
     src/audio/AudioMixer.cpp
@@ -62,6 +76,8 @@ target_include_directories(sdrscan_core PUBLIC
     ${PORTAUDIO_INCLUDE_DIRS}
     ${SOAPYSDR_INCLUDE_DIRS}
     ${MP3LAME_INCLUDE_DIR}
+    ${DSDCC_INCLUDE_DIRS}
+    ${MBE_INCLUDE_DIR}
 )
 
 target_link_libraries(sdrscan_core PUBLIC
@@ -73,9 +89,11 @@ target_link_libraries(sdrscan_core PUBLIC
     ${PORTAUDIO_LIBRARIES}
     ${SOAPYSDR_LIBRARIES}
     ${MP3LAME_LIBRARY}
+    ${DSDCC_LIBRARIES}
+    ${MBE_LIBRARY}
 )
 
-target_compile_options(sdrscan_core PUBLIC ${PORTAUDIO_CFLAGS_OTHER} ${SOAPYSDR_CFLAGS_OTHER})
+target_compile_options(sdrscan_core PUBLIC ${PORTAUDIO_CFLAGS_OTHER} ${SOAPYSDR_CFLAGS_OTHER} ${DSDCC_CFLAGS_OTHER})
 
 ###
 # Main app

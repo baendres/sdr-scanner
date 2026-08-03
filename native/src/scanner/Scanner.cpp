@@ -171,6 +171,13 @@ void Scanner::setChannelNoiseSquelchThreshold(const std::string& channelId, std:
         [](ChannelBlockBase& block, const ChannelConfig& cc) { block.setNoiseSquelchThreshold(cc.noiseSquelchThreshold_dB); });
 }
 
+void Scanner::setChannelDmrTalkgroupFilter(const std::string& channelId, std::optional<uint32_t> talkgroupFilter) {
+    updateChannel(
+        channelId,
+        [&](ChannelConfig& cc) { cc.dmrTalkgroupFilter = talkgroupFilter; },
+        [](ChannelBlockBase& block, const ChannelConfig& cc) { block.setDmrTalkgroupFilter(cc.dmrTalkgroupFilter); });
+}
+
 void Scanner::setChannelAudioGain(const std::string& channelId, double audioGain_dB) {
     updateChannel(
         channelId,
