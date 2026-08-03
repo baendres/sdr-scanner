@@ -389,16 +389,6 @@ void Scanner::setMaxChannelsPerWindow(int maxChannelsPerWindow) {
 void Scanner::buildWindows() {
     if (receivers_.empty()) return; // called before start(); real build happens in start()
 
-    int64_t bandwidth = -1;
-    for (auto& receiver : receivers_) {
-        int64_t maxUsable = -1;
-        for (int rate : receiver->getSampleRates()) {
-            if (rate <= MAX_RF_SAMPLERATE) maxUsable = std::max<int64_t>(maxUsable, rate);
-        }
-        if (maxUsable < 0) throw std::runtime_error("Receiver has no usable sample rate <= MAX_RF_SAMPLERATE");
-        bandwidth = (bandwidth < 0) ? maxUsable : std::min(bandwidth, maxUsable);
-    }
-
     constexpr int64_t kBandEdgeMargin = 200'000;
 
     std::vector<ChannelConfig> enabledChannels;
@@ -407,6 +397,38 @@ void Scanner::buildWindows() {
         for (auto& [id, cc] : channelConfigsById_) {
             if (cc.isEnabledNow(nowUnixSeconds())) enabledChannels.push_back(cc);
         }
+    }
+
+    // If any enabled channel anywhere is DMR, every window on every receiver needs to share one
+    // single RF sample rate that's a whole multiple of 48000Hz (see ChannelBlockDMR/ScanWindow::
+    // selectRfSampleRate) - NOT just the specific windows containing a DMR channel. Windows are
+    // shared across all receivers (postScanWindowConfigs() below broadcasts the same list to
+    // every one of them) and picked up interchangeably, and SoapyReceiver::startWindow() actually
+    // reprograms the hardware's sample rate whenever a window asks for a different one than the
+    // last - a real ~100ms hit - so letting bandwidth vary window-to-window would mean constant
+    // expensive retuning on every hop between a DMR and non-DMR window, not just DMR ones failing
+    // to build. Baking the constraint into the single global `bandwidth` value instead keeps one
+    // fixed rate for the whole scan, with window grouping (below) naturally fitting within it -
+    // exactly like the non-DMR case already works, just with a smaller shared budget.
+    bool anyDmrEnabled = std::any_of(enabledChannels.begin(), enabledChannels.end(),
+                                      [](const ChannelConfig& cc) { return cc.mode == ChannelMode::DMR; });
+
+    int64_t bandwidth = -1;
+    for (auto& receiver : receivers_) {
+        int64_t maxUsable = -1;
+        for (int rate : receiver->getSampleRates()) {
+            if (rate > MAX_RF_SAMPLERATE) continue;
+            if (anyDmrEnabled && rate % DMR_DISCRIMINATOR_RATE_HZ != 0) continue;
+            maxUsable = std::max<int64_t>(maxUsable, rate);
+        }
+        if (maxUsable < 0) {
+            throw std::runtime_error(
+                anyDmrEnabled
+                    ? "Receiver has no usable sample rate <= MAX_RF_SAMPLERATE that's also a "
+                      "whole multiple of 48000Hz (required because a DMR channel is enabled)"
+                    : "Receiver has no usable sample rate <= MAX_RF_SAMPLERATE");
+        }
+        bandwidth = (bandwidth < 0) ? maxUsable : std::min(bandwidth, maxUsable);
     }
 
     std::set<int64_t> freqsToAllocate;
@@ -434,19 +456,6 @@ void Scanner::buildWindows() {
         swc.id = makeUuid();
         swc.hardwareFreq_hz = hardwareFreq;
         swc.rfBandwidth = bandwidth;
-        // Windows normally always request the receiver's full max bandwidth (see `bandwidth`
-        // above) regardless of how tightly clustered their actual channels are, to pack as many
-        // channels as possible per window/hop. But a DMR channel further restricts the RF sample
-        // rate to whole multiples of 48000Hz (see ChannelBlockDMR/ScanWindow::
-        // selectRfSampleRate), and on RTL-SDR's curated rate list only 1536000/1920000 qualify -
-        // both well under the receiver's 2048000 max, so a DMR window asking for the full
-        // bandwidth can never find a compatible rate and always fails to build (even though the
-        // channels actually present might easily fit in 1.5-1.9MHz). Ask for only as much
-        // bandwidth as this window's actual channels need instead, whenever one of them is DMR.
-        if (!ccs.empty() && std::any_of(ccs.begin(), ccs.end(), [](const ChannelConfig& cc) { return cc.mode == ChannelMode::DMR; })) {
-            int64_t actualSpan = (ccs.back().freq_hz - ccs.front().freq_hz) + 2 * kBandEdgeMargin;
-            swc.rfBandwidth = std::min(bandwidth, actualSpan);
-        }
         swc.channelConfigs = ccs;
         newWindows.push_back(swc);
     }
