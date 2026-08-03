@@ -336,16 +336,27 @@ btnGainApply?.addEventListener("click", () => {
   if (Number.isFinite(v)) send({ type: "ChannelSetAudioGain", data: { id: selectedId, audioGain_dB: v } });
 });
 
-async function loadSnapshot() {
-  const r = await fetch("/api/state", { cache: "no-store" });
-  const s = await r.json();
-
+// Shared by the initial REST fetch and every WS "Snapshot" (sent on connect/reconnect) - both
+// carry the same {channels, channelStatuses} shape and are equally authoritative, so both need
+// the same "rebuild from scratch, don't just merge in" handling. Merging-only was the original
+// approach and it meant a channel added/removed elsewhere (another tab, the settings page) never
+// actually propagated here: cfgById/statusById/lastSeen would just accumulate stale entries for
+// since-deleted channels forever, visible as phantom rows/strips that don't go away without a
+// manual page reload.
+function applySnapshot(s) {
+  cfgById.clear();
   for (const c of (s.channels || [])) cfgById.set(String(c.id), c);
+
+  for (const id of Array.from(statusById.keys())) {
+    if (!cfgById.has(id)) { statusById.delete(id); lastSeen.delete(id); }
+  }
   for (const st of (s.channelStatuses || [])) {
     const id = String(st.id);
     statusById.set(id, st);
     lastSeen.set(id, Date.now() / 1000);
   }
+
+  if (selectedId && !cfgById.has(selectedId)) selectedId = null;
 
   renderConfigTable();
   renderActiveList();
@@ -358,6 +369,11 @@ async function loadSnapshot() {
   }
 }
 
+async function loadSnapshot() {
+  const r = await fetch("/api/state", { cache: "no-store" });
+  applySnapshot(await r.json());
+}
+
 function handleMsg(msg) {
   if (!msg || !msg.type) return;
 
@@ -367,16 +383,7 @@ function handleMsg(msg) {
   }
 
   if (msg.type === "Snapshot") {
-    const d = msg.data || {};
-    for (const c of (d.channels || [])) cfgById.set(String(c.id), c);
-    for (const st of (d.channelStatuses || [])) {
-      const id = String(st.id);
-      statusById.set(id, st);
-      lastSeen.set(id, Date.now() / 1000);
-    }
-    renderConfigTable();
-    renderActiveList();
-    updateSelectedButtons();
+    applySnapshot(msg.data || {});
     return;
   }
 
@@ -395,6 +402,15 @@ function handleMsg(msg) {
     statusById.set(id, st);
     lastSeen.set(id, Date.now() / 1000);
     renderActiveList();
+    return;
+  }
+
+  if (msg.type === "ScanWindowConfigsChanged") {
+    // Fired on every structural change (channel add/remove/enable/disable, maxChannelsPerWindow,
+    // ...) - a full re-fetch is the simplest way to stay correct across all of them uniformly,
+    // including ones (add/remove specifically) that otherwise carry no other broadcast at all.
+    // Not a hot path: this only fires on deliberate structural edits, not routine scanning.
+    loadSnapshot().catch(() => {});
     return;
   }
 }
