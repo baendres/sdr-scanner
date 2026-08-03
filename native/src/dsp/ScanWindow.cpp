@@ -4,6 +4,7 @@
 #include "ChannelBlockAM.h"
 #include "ChannelBlockEAS.h"
 #include "ChannelBlockDMR.h"
+#include "ChannelBlockP25Voice.h"
 #include "../util/Uuid.h"
 
 #include <gnuradio/filter/firdes.h>
@@ -76,6 +77,11 @@ std::shared_ptr<ChannelBlockBase> buildChannelBlock(const ChannelConfig& cc,
             block = dmrBlock;
             break;
         }
+        case ChannelMode::P25:
+            block = gnuradio::make_block_sptr<ChannelBlockP25Voice>(
+                cc.id, cc.label, cc.mute, cc.solo, cc.hold, cc.audioGain_dB, cc.dwellTime_s,
+                cc.freq_hz, hardwareFreq_hz, rfSampleRate, audioSampleRate, statusCallback);
+            break;
         default:
             throw std::runtime_error("buildChannelBlock: unhandled ChannelMode");
     }

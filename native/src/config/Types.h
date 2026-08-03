@@ -16,6 +16,7 @@ enum class ChannelMode {
     NOAA,     // NOAA weather radio SAME/EAS attention tone (1050 Hz) on narrowband FM
     BFM_EAS,  // Broadcast EAS two-tone attention signal (853/960 Hz) on wideband FM
     DMR,      // Conventional (non-trunked) DMR, one timeslot per ChannelConfig - see dmrSlot
+    P25,      // P25 Phase 1 conventional voice (fixed frequency, not trunked)
 };
 
 std::string channelModeToString(ChannelMode mode);

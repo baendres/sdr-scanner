@@ -57,6 +57,8 @@ add_library(sdrscan_core STATIC
     src/dsp/ChannelBlockAM.cpp
     src/dsp/ChannelBlockEAS.cpp
     src/dsp/ChannelBlockDMR.cpp
+    src/dsp/ChannelBlockP25Voice.cpp
+    src/dsp/P25TsbkDecoder.cpp
     src/dsp/DsdccDecodeBlock.cpp
     src/dsp/ScanWindow.cpp
     src/receiver/SoapyReceiver.cpp
