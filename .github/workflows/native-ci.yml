@@ -35,7 +35,23 @@ jobs:
             libyaml-cpp-dev \
             libmp3lame-dev \
             catch2 \
-            ca-certificates
+            ca-certificates \
+            git
+
+      # mbelib + DSDcc aren't packaged in Ubuntu 24.04's apt repo - native/CMakeLists.txt
+      # pkg_check_modules(libdsdcc)'s for them, so they need to be built from source here too,
+      # matching native/Dockerfile's build stage exactly (see that file's comment for why).
+      - name: Build mbelib + DSDcc
+        run: |
+          git clone --depth 1 https://github.com/f4exb/mbelib.git /tmp/mbelib
+          cmake -S /tmp/mbelib -B /tmp/mbelib/build -DCMAKE_BUILD_TYPE=Release -DDISABLE_TEST=ON
+          cmake --build /tmp/mbelib/build -j"$(nproc)"
+          sudo cmake --install /tmp/mbelib/build
+          git clone --depth 1 https://github.com/f4exb/dsdcc.git /tmp/dsdcc
+          cmake -S /tmp/dsdcc -B /tmp/dsdcc/build -DCMAKE_BUILD_TYPE=Release -DUSE_MBELIB=ON -DBUILD_TOOL=OFF
+          cmake --build /tmp/dsdcc/build -j"$(nproc)"
+          sudo cmake --install /tmp/dsdcc/build
+          sudo ldconfig
 
       - name: Configure
         working-directory: native
