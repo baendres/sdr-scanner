@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 namespace sdrscan {
 
@@ -15,6 +16,20 @@ namespace {
 // unverified against real DMR/P25 RF in this sandbox (no hardware available), flag for
 // real-world tuning if decode quality is poor.
 constexpr float kInt16Scale = 32767.0f;
+
+const char* syncTypeName(DSDcc::DSDDecoder::DSDSyncType t) {
+    using T = DSDcc::DSDDecoder::DSDSyncType;
+    switch (t) {
+        case T::DSDSyncDMRDataP: return "DMRDataP";
+        case T::DSDSyncDMRDataMS: return "DMRDataMS";
+        case T::DSDSyncDMRVoiceP: return "DMRVoiceP";
+        case T::DSDSyncDMRVoiceMS: return "DMRVoiceMS";
+        case T::DSDSyncP25p1P: return "P25p1P";
+        case T::DSDSyncP25p1N: return "P25p1N";
+        case T::DSDSyncNone: return "None";
+        default: return "other";
+    }
+}
 } // namespace
 
 DsdccDecodeBlock::DsdccDecodeBlock(DSDcc::DSDDecoder::DSDDecodeMode mode, bool tdmaStereo)
@@ -44,6 +59,7 @@ int DsdccDecodeBlock::general_work(int noutput_items,
     }
     consume_each(nin);
 
+    logSyncTypeChange();
     pollDecodedAudio();
 
     float* out1 = static_cast<float*>(output_items[0]);
@@ -58,6 +74,14 @@ int DsdccDecodeBlock::general_work(int noutput_items,
     produce(0, n1);
     produce(1, n2);
     return WORK_CALLED_PRODUCE;
+}
+
+void DsdccDecodeBlock::logSyncTypeChange() {
+    auto syncType = decoder_.getSyncType();
+    if (syncType == lastLoggedSyncType_) return;
+    std::cerr << "DsdccDecodeBlock: sync " << syncTypeName(lastLoggedSyncType_) << " -> "
+               << syncTypeName(syncType) << "\n";
+    lastLoggedSyncType_ = syncType;
 }
 
 void DsdccDecodeBlock::pollDecodedAudio() {

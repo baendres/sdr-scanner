@@ -34,10 +34,17 @@ public:
 
 private:
     void pollDecodedAudio();
+    void logSyncTypeChange();
 
     DSDcc::DSDDecoder decoder_;
     std::vector<float> pending1_;
     std::vector<float> pending2_;
+    // Diagnostic aid for tuning against real RF (see this class's header caveat) - logs to
+    // stderr whenever DSDcc's sync state changes, so it's possible to tell "never syncing at
+    // all" (an RF-chain/calibration problem) from "syncs but voice-active never triggers" (a
+    // logic bug further downstream in ChannelBlockDMR/ChannelBlockP25Voice) just by watching the
+    // server console while transmitting on the channel's frequency.
+    DSDcc::DSDDecoder::DSDSyncType lastLoggedSyncType_ = DSDcc::DSDDecoder::DSDSyncNone;
 };
 
 } // namespace sdrscan

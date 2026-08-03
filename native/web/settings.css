@@ -25,8 +25,21 @@
   border: 1px solid #d1d5db;
   font-size: 13px;
 }
-#channelsTable th, #receiversTable th, #outputsTable th { white-space: nowrap; }
+#receiversTable th, #outputsTable th { white-space: nowrap; }
 #channelsTable td, #receiversTable td, #outputsTable td { vertical-align: middle; }
+
+/* The Channels table has too many columns to fit readably at the shared 100% table width (see
+   style.css) - table-layout:fixed + the colgroup widths in settings.html give every column,
+   especially Label, a real minimum instead of every input getting squeezed to a few px in
+   proportion to unrelated columns' content; .table-wrap's existing overflow:auto lets it scroll
+   horizontally past the card's max-width for whatever doesn't fit. table-layout:fixed only
+   actually locks column widths to the colgroup when the table itself has a definite `width`
+   (not auto) - with auto, Chromium falls back to content-based sizing and the long headers below
+   blow past their column again, so this needs an explicit width matching the colgroup's total. */
+#channelsTable { table-layout: fixed; width: 1190px; }
+/* Long headers ("Adaptive Margin (dB)") can't fit their fixed-width column on one line - let them
+   wrap instead of forcing nowrap (which would just bleed the text into neighboring columns). */
+#channelsTable th { white-space: normal; word-break: break-word; }
 .row-btns { display: flex; gap: 6px; }
 .row-btns .btn { padding: 4px 8px; font-size: 12px; }
 .out-config-fields { display: flex; gap: 4px; }
