@@ -434,6 +434,19 @@ void Scanner::buildWindows() {
         swc.id = makeUuid();
         swc.hardwareFreq_hz = hardwareFreq;
         swc.rfBandwidth = bandwidth;
+        // Windows normally always request the receiver's full max bandwidth (see `bandwidth`
+        // above) regardless of how tightly clustered their actual channels are, to pack as many
+        // channels as possible per window/hop. But a DMR channel further restricts the RF sample
+        // rate to whole multiples of 48000Hz (see ChannelBlockDMR/ScanWindow::
+        // selectRfSampleRate), and on RTL-SDR's curated rate list only 1536000/1920000 qualify -
+        // both well under the receiver's 2048000 max, so a DMR window asking for the full
+        // bandwidth can never find a compatible rate and always fails to build (even though the
+        // channels actually present might easily fit in 1.5-1.9MHz). Ask for only as much
+        // bandwidth as this window's actual channels need instead, whenever one of them is DMR.
+        if (!ccs.empty() && std::any_of(ccs.begin(), ccs.end(), [](const ChannelConfig& cc) { return cc.mode == ChannelMode::DMR; })) {
+            int64_t actualSpan = (ccs.back().freq_hz - ccs.front().freq_hz) + 2 * kBandEdgeMargin;
+            swc.rfBandwidth = std::min(bandwidth, actualSpan);
+        }
         swc.channelConfigs = ccs;
         newWindows.push_back(swc);
     }
