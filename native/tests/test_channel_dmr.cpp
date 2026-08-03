@@ -16,6 +16,7 @@
 #include <gnuradio/sptr_magic.h>
 
 #include "../src/dsp/ChannelBlockDMR.h"
+#include "../src/dsp/ScanWindow.h"
 
 using namespace sdrscan;
 
@@ -94,4 +95,31 @@ TEST_CASE("ChannelBlockDMR: forceActive forces one slot ACTIVE without affecting
     ts1->setForceActive(true);
     CHECK(ts1->getStatus() == ChannelStatus::FORCE_ACTIVE);
     CHECK(ts2->getStatus() == ChannelStatus::IDLE);
+}
+
+// Regression test for a real crash: SoapyReceiver::rebuildGraph() used to pick an RF sample rate
+// with no regard for whether the window contained a DMR channel, so on hardware whose narrowest
+// covering rate wasn't a multiple of 48000Hz (e.g. an RTL-SDR offering 2048000, which isn't -
+// see kRtlSdrSampleRates in SoapyReceiver.cpp), ChannelBlockDMR's constructor would throw on the
+// receiver's own thread, uncaught, killing the whole process (see ChannelBlockBase's/
+// SoapyReceiver::startWindow()'s "uncaught exception aborts the entire process" note).
+TEST_CASE("ScanWindow::selectRfSampleRate skips non-48000-multiple rates when DMR is required") {
+    // Mirrors SoapyReceiver.cpp's kRtlSdrSampleRates - only 1536000 and 1920000 are whole
+    // multiples of 48000.
+    const std::vector<int> rtlSdrRates = {1'024'000, 1'536'000, 1'792'000, 1'920'000, 2'048'000};
+
+    // Without the DMR constraint, the narrowest rate that covers the bandwidth wins as before.
+    CHECK(ScanWindow::selectRfSampleRate(rtlSdrRates, /*rfBandwidth=*/1'000'000,
+                                          /*requireDmrCompatibleRate=*/false) == 1'024'000);
+
+    // With it, that same narrowest-covering rate (1024000) isn't a multiple of 48000, so it must
+    // be skipped in favor of the next one that is (1536000), not thrown from ChannelBlockDMR.
+    CHECK(ScanWindow::selectRfSampleRate(rtlSdrRates, /*rfBandwidth=*/1'000'000,
+                                          /*requireDmrCompatibleRate=*/true) == 1'536'000);
+}
+
+TEST_CASE("ScanWindow::selectRfSampleRate throws when no rate is both wide enough and DMR-compatible") {
+    const std::vector<int> rates = {1'024'000, 2'048'000}; // neither is a multiple of 48000
+    CHECK_THROWS(ScanWindow::selectRfSampleRate(rates, /*rfBandwidth=*/500'000,
+                                                 /*requireDmrCompatibleRate=*/true));
 }

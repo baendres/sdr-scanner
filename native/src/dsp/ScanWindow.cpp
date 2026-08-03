@@ -181,13 +181,20 @@ double ScanWindow::getMinimumScanTime() const {
     return *minimumScanTime_;
 }
 
-int ScanWindow::selectRfSampleRate(const std::vector<int>& availableRates, int64_t rfBandwidth) {
+int ScanWindow::selectRfSampleRate(const std::vector<int>& availableRates, int64_t rfBandwidth,
+                                    bool requireDmrCompatibleRate) {
     std::vector<int> candidates;
     for (int r : availableRates) {
-        if (r >= rfBandwidth) candidates.push_back(r);
+        if (r < rfBandwidth) continue;
+        if (requireDmrCompatibleRate && r % DMR_DISCRIMINATOR_RATE_HZ != 0) continue;
+        candidates.push_back(r);
     }
     if (candidates.empty()) {
-        throw std::runtime_error("ScanWindow: no available RF sample rate covers the required bandwidth");
+        throw std::runtime_error(
+            requireDmrCompatibleRate
+                ? "ScanWindow: no available RF sample rate both covers the required bandwidth "
+                  "and is a whole multiple of 48000Hz (required for DMR channels)"
+                : "ScanWindow: no available RF sample rate covers the required bandwidth");
     }
     return *std::min_element(candidates.begin(), candidates.end());
 }

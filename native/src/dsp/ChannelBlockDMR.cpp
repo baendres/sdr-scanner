@@ -15,8 +15,9 @@ namespace {
 // filter width used by other DMR/C4FM decoders.
 constexpr double kHalfBandwidthHz = 6250.0;
 // DSDcc's DSDRate4800 (10 samples/symbol @ 4800 baud) is what setDecodeMode(DSDDecodeDMR,...)
-// selects internally - see DsdccDecodeBlock.
-constexpr int kDiscriminatorRate = 48000;
+// selects internally - see DsdccDecodeBlock. Shared with Const.h's DMR_DISCRIMINATOR_RATE_HZ so
+// ScanWindow::selectRfSampleRate() can pick a compatible RF sample rate up front.
+constexpr int kDiscriminatorRate = DMR_DISCRIMINATOR_RATE_HZ;
 // Assumed DMR (ETSI TS 102 361) 4FSK outer symbol deviation - unverified against real DMR RF in
 // this sandbox (no hardware available); the quad-demod gain this drives just needs to land
 // DSDcc's auto-leveling symbol tracker in a reasonable range (see DsdccDecodeBlock.cpp's note),

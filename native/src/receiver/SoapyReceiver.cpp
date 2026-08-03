@@ -5,6 +5,7 @@
 #include <gnuradio/soapy/soapy_types.h>
 #include <SoapySDR/Device.hpp>
 
+#include <algorithm>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -138,7 +139,9 @@ void SoapyReceiver::postScanWindowConfigs(std::vector<ScanWindowConfig> configs)
 }
 
 std::shared_ptr<ScanWindow> SoapyReceiver::buildWindow(const ScanWindowConfig& cfg) {
-    int rfSampleRate = ScanWindow::selectRfSampleRate(getSampleRates(), cfg.rfBandwidth);
+    bool hasDmrChannel = std::any_of(cfg.channelConfigs.begin(), cfg.channelConfigs.end(),
+                                      [](const ChannelConfig& cc) { return cc.mode == ChannelMode::DMR; });
+    int rfSampleRate = ScanWindow::selectRfSampleRate(getSampleRates(), cfg.rfBandwidth, hasDmrChannel);
     return std::make_shared<ScanWindow>(cfg, rfSampleRate, statusCallback_);
 }
 
@@ -168,7 +171,19 @@ void SoapyReceiver::rebuildGraph(std::vector<ScanWindowConfig> configs) {
 
     std::unordered_map<std::string, std::shared_ptr<ScanWindow>> rebuilt;
     for (const auto& cfg : configs) {
-        rebuilt[cfg.id] = buildWindow(cfg);
+        try {
+            rebuilt[cfg.id] = buildWindow(cfg);
+        } catch (const std::exception& e) {
+            // A channel config that a ChannelBlock's constructor rejects (e.g. a DMR channel on
+            // a receiver whose selected RF sample rate isn't a multiple of 48000Hz - see
+            // ChannelBlockDMR) must not be allowed to escape this receiver's dedicated thread
+            // uncaught, for the same reason startWindow() below guards hardware exceptions: an
+            // uncaught exception on any thread calls std::terminate() and aborts the *entire*
+            // process. Skip just this window (and whichever channels share it) rather than
+            // taking every other receiver/channel down with it.
+            std::cerr << "SoapyReceiver " << config_.id << ": failed to build window " << cfg.id
+                       << ": " << e.what() << "\n";
+        }
     }
 
     // A fresh top_block each rebuild (rather than reusing one across rebuilds) means there's

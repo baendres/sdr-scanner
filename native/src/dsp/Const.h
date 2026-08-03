@@ -36,4 +36,9 @@ constexpr float CTCSS_DEFAULT_LEVEL = 0.01f;
 // Arbitrary floor used when a magnitude is ~0 (avoids log10(0)).
 constexpr float DBFS_FLOOR = -150.0f;
 
+// DMR channels need an RF sample rate that's a whole multiple of this (see ChannelBlockDMR.cpp's
+// kDiscriminatorRate) - ScanWindow::selectRfSampleRate() needs to know this constraint too, to
+// avoid picking a rate that would make ChannelBlockDMR's constructor throw.
+constexpr int DMR_DISCRIMINATOR_RATE_HZ = 48000;
+
 } // namespace sdrscan
