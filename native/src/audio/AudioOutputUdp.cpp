@@ -21,13 +21,17 @@ AudioOutputUdp::~AudioOutputUdp() {
 }
 
 void AudioOutputUdp::reconnect() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    reconnectLocked();
+}
+
+void AudioOutputUdp::reconnectLocked() {
     close();
     socketFd_ = socket(AF_INET, SOCK_DGRAM, 0);
     if (socketFd_ < 0) {
         std::cerr << "AudioOutputUdp: failed to create socket\n";
         return;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
     outputBuffer_.clear();
 }
 
@@ -43,7 +47,12 @@ void AudioOutputUdp::send(const std::vector<int16_t>& samples) {
     outputBuffer_.insert(outputBuffer_.end(), samples.begin(), samples.end());
 
     if (socketFd_ < 0) {
-        reconnect();
+        // reconnectLocked(), not reconnect() - this call already holds mutex_ (see above), and
+        // std::mutex isn't recursive: re-locking it here (as reconnect() itself does) would
+        // self-deadlock this thread permanently. Since this runs on AudioMixer's own thread,
+        // that would silently freeze all audio output and eventually take the whole process
+        // down once the liveness watchdog notices the mixer stopped ticking.
+        reconnectLocked();
         if (socketFd_ < 0) return;
     }
 
@@ -65,7 +74,7 @@ void AudioOutputUdp::send(const std::vector<int16_t>& samples) {
                                reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
         if (sent < 0) {
             std::cerr << "AudioOutputUdp: send failed, reconnecting\n";
-            reconnect();
+            reconnectLocked(); // see the note on the other call site above - mutex_ is held here too
             return;
         }
     }

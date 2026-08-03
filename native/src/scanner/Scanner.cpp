@@ -534,7 +534,21 @@ void Scanner::runMaintenanceLoop() {
             }
         }
         if (!reenabled.empty()) {
-            buildWindows();
+            try {
+                // buildWindows() can throw (e.g. "no usable sample rate" if a receiver's
+                // getSampleRates() comes back empty, which can happen transiently on a hardware/
+                // USB hiccup) - unlike every other call site (HTTP request handlers already
+                // catch std::exception and turn it into a 400), this one runs on
+                // maintenanceThread_ with nothing above it to catch an escaping exception, and
+                // an uncaught exception on any thread calls std::terminate() and aborts the
+                // *entire* process - taking every receiver/channel down over what should have
+                // been a transient, retryable condition. Same reasoning as the catch in
+                // SoapyReceiver::startWindow().
+                buildWindows();
+            } catch (const std::exception& e) {
+                std::cerr << "Scanner: buildWindows() failed while re-enabling channel(s): "
+                           << e.what() << "\n";
+            }
             for (auto& cc : reenabled) {
                 ScannerEvent event;
                 event.type = ScannerEventType::ChannelConfigChanged;

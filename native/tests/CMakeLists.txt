@@ -16,6 +16,7 @@ add_executable(sdrscan_tests
     test_squelch_debounce.cpp
     test_scanner_config.cpp
     test_icecast_output.cpp
+    test_audio_output_udp.cpp
     test_selector_hop.cpp
     test_protocol.cpp
     test_audio_mixer_watchdog.cpp

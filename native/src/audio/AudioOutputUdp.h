@@ -20,6 +20,10 @@ public:
     void send(const std::vector<int16_t>& samples) override;
 
 private:
+    // Assumes mutex_ is already held by the caller - see the note on the two send() call sites
+    // that use this instead of reconnect() itself.
+    void reconnectLocked();
+
     std::string serverIp_;
     int serverPort_;
     int socketFd_ = -1;
