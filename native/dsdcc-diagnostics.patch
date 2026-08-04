@@ -1,0 +1,49 @@
+--- a/dsd_decoder.h
++++ b/dsd_decoder.h
+@@ -216,6 +216,17 @@
+         return m_lastSyncType;
+     }
+
++    // Diagnostic-only (see sdrscan's DsdccDecodeBlock, which is the sole consumer): the sync
++    // engine's per-pattern mismatch counts (0-24 dibits, tolerance 2 - see dsd_sync.cpp) from the
++    // most recent DMR sync search, captured right after DSDSync::matchAll() in getFrameSync().
++    // Lets a caller tell "BS narrowly missed tolerance" (a marginal/calibration-fixable signal)
++    // from "BS was never close" (something else going on) instead of only seeing which pattern
++    // ultimately won.
++    unsigned int getDmrDataBsSyncErrors() const { return m_lastDmrDataBsErrors; }
++    unsigned int getDmrDataMsSyncErrors() const { return m_lastDmrDataMsErrors; }
++    unsigned int getDmrVoiceBsSyncErrors() const { return m_lastDmrVoiceBsErrors; }
++    unsigned int getDmrVoiceMsSyncErrors() const { return m_lastDmrVoiceMsErrors; }
++
+     DSDStationType getStationType() const { return m_stationType; }
+     const char *getFrameTypeText() const { return m_state.ftype; }
+     const char *getFrameSubtypeText() const { return m_state.fsubtype; }
+@@ -331,6 +342,11 @@
+     DSDRate m_dataRate;
+     DSDSyncType m_syncType;
+     DSDSyncType m_lastSyncType;
++    // See getDmrDataBsSyncErrors() etc. above.
++    unsigned int m_lastDmrDataBsErrors = 0;
++    unsigned int m_lastDmrDataMsErrors = 0;
++    unsigned int m_lastDmrVoiceBsErrors = 0;
++    unsigned int m_lastDmrVoiceMsErrors = 0;
+     LocPoint m_myPoint;
+     // status text
+     SignalFormat m_signalFormat;
+--- a/dsd_decoder.cpp
++++ b/dsd_decoder.cpp
+@@ -640,6 +640,14 @@
+         m_dmrBurstType = DSDDMR::DSDDMRBurstNone;
+         syncEngine.matchAll(m_dsdSymbol.getSyncDibitBack(DSDSync::m_history));
+
++        // Diagnostic-only (see getDmrDataBsSyncErrors() etc. in dsd_decoder.h): matchAll() above
++        // already scored every pattern this call, win or lose - capture the DMR ones
++        // unconditionally so a caller can see how close a losing pattern actually was.
++        m_lastDmrDataBsErrors = syncEngine.getErrors(DSDSync::SyncDMRDataBS);
++        m_lastDmrDataMsErrors = syncEngine.getErrors(DSDSync::SyncDMRDataMS);
++        m_lastDmrVoiceBsErrors = syncEngine.getErrors(DSDSync::SyncDMRVoiceBS);
++        m_lastDmrVoiceMsErrors = syncEngine.getErrors(DSDSync::SyncDMRVoiceMS);
++
+         if (m_opts.frame_p25p1 == 1)
+         {
+             if (syncEngine.isMatching(DSDSync::SyncP25P1))

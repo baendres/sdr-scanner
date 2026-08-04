@@ -99,8 +99,17 @@ int DsdccDecodeBlock::general_work(int noutput_items,
 void DsdccDecodeBlock::logSyncTypeChange() {
     auto syncType = decoder_.getSyncType();
     if (syncType == lastLoggedSyncType_) return;
+    // DMR-specific diagnostic (see DSDDecoder::getDmrDataBsSyncErrors() etc., a small vendored
+    // patch to DSDcc - native/dsdcc-diagnostics.patch): the sync engine's mismatch count for
+    // each DMR pattern (0-24 dibits, tolerance 2) from the most recent sync search, regardless
+    // of which pattern actually won this transition. Answers "how close was BS-framed (real
+    // repeater) sync to matching" whenever MS-framed (direct-mode) sync wins instead, which
+    // otherwise looks identical to genuinely MS-only traffic in the plain sync-type log alone.
     std::cerr << "DsdccDecodeBlock: sync " << syncTypeName(lastLoggedSyncType_) << " -> "
-               << syncTypeName(syncType) << "\n";
+               << syncTypeName(syncType) << " (DMR sync errors: dataBS=" << decoder_.getDmrDataBsSyncErrors()
+               << " dataMS=" << decoder_.getDmrDataMsSyncErrors()
+               << " voiceBS=" << decoder_.getDmrVoiceBsSyncErrors()
+               << " voiceMS=" << decoder_.getDmrVoiceMsSyncErrors() << ", tolerance=2)\n";
     lastLoggedSyncType_ = syncType;
 }
 

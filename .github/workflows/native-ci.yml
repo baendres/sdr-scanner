@@ -48,6 +48,7 @@ jobs:
           cmake --build /tmp/mbelib/build -j"$(nproc)"
           sudo cmake --install /tmp/mbelib/build
           git clone --depth 1 https://github.com/f4exb/dsdcc.git /tmp/dsdcc
+          patch -p1 -d /tmp/dsdcc < native/dsdcc-diagnostics.patch
           cmake -S /tmp/dsdcc -B /tmp/dsdcc/build -DCMAKE_BUILD_TYPE=Release -DUSE_MBELIB=ON -DBUILD_TOOL=OFF
           cmake --build /tmp/dsdcc/build -j"$(nproc)"
           sudo cmake --install /tmp/dsdcc/build
