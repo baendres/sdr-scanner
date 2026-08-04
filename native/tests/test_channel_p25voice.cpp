@@ -23,6 +23,17 @@ constexpr int kAudioSampleRate = 16'000;
 
 } // namespace
 
+// Regression test - see ChannelBlockDMR.h's getMinimumScanTime() override comment (same
+// continuous-samples-for-frame-sync reasoning applies to P25 Phase 1's DSDcc-based decode).
+TEST_CASE("ChannelBlockP25Voice: getMinimumScanTime() is long enough for DSDcc to establish sync") {
+    auto p25v = gnuradio::make_block_sptr<ChannelBlockP25Voice>(
+        "p25v", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
+        /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
+        kRfSampleRate, kAudioSampleRate, [](ChannelStatusUpdate) {});
+
+    CHECK(p25v->getMinimumScanTime() >= 1.0);
+}
+
 TEST_CASE("ChannelBlockP25Voice: rejects an RF sample rate that isn't a whole multiple of 48000Hz") {
     CHECK_THROWS(gnuradio::make_block_sptr<ChannelBlockP25Voice>(
         "bad", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,

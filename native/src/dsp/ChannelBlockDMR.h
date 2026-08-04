@@ -56,6 +56,27 @@ public:
     void setDmrTalkgroupFilter(std::optional<uint32_t> talkgroupFilter) override { talkgroupFilter_ = talkgroupFilter; }
     ChannelStatus getStatus() override;
 
+    // Unlike FM/AM's power squelch (which just needs a fraction of a second to sample carrier
+    // level), DSDcc's DMR frame sync needs real, *continuous* discriminator samples across
+    // several consecutive TDMA bursts (60ms/frame) to lock on at all - the base class's 0.1s
+    // default (tuned for analog squelch) is nowhere near enough. Confirmed via a real-hardware
+    // capture with the sync-mismatch diagnostic logging on: even a strong signal (repeater
+    // antenna ~20 feet from the receiver, ruling out weak-signal theories entirely) showed sync
+    // constantly flapping between DMRDataP/DMRVoiceP (correct repeater framing) and
+    // DMRDataMS/DMRVoiceMS (DSDcc's fallback when it can't confirm the real pattern) and
+    // dropping back to None within the same second - because this receiver's round-robin
+    // scheduler (Scanner::buildWindows()/SoapyReceiver::checkCurrentWindow()) only feeds this
+    // channel's window real RF for as long as getMinimumScanTime() before it's eligible to hop
+    // away again, and every other window's channels get zero samples in between. A DMR
+    // transmission spread across scattered ~100ms fragments, seconds apart, can never build a
+    // stable lock - DSDcc has no way to know the gap happened, so each fragment starts the sync
+    // hunt over from a phase relationship to the transmitter's TDMA clock. This isn't tunable
+    // per-channel (dwellTime_s only controls how long an *active* call is held once synced) -
+    // it needs a materially longer guaranteed-continuous look before the round-robin considers
+    // giving up on this window, same reason real trunked/digital scanners dwell longer on
+    // digital channels than analog ones.
+    double getMinimumScanTime() const override { return 1.5; }
+
     // Non-null once constructed (either freshly built, for whichever instance owns the front
     // end, or the one passed into existingDecodeBlock) - lets ScanWindow::buildChannelBlock pass
     // the first DMR channel's decoder to the second one at the same freq_hz.

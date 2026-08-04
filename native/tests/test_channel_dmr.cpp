@@ -29,6 +29,21 @@ constexpr int kAudioSampleRate = 16'000;
 
 } // namespace
 
+// Regression test for a real production issue: DSDcc's DMR frame sync needs continuous samples
+// across several TDMA bursts to lock on, but the base class's 0.1s getMinimumScanTime() default
+// (sized for analog squelch) let the round-robin scheduler hop away long before that - even with
+// a strong, close-range signal, confirmed via real hardware showing sync constantly flapping and
+// never holding. See ChannelBlockDMR.h's getMinimumScanTime() override comment for the full story.
+TEST_CASE("ChannelBlockDMR: getMinimumScanTime() is long enough for DSDcc to establish sync") {
+    auto dmr = gnuradio::make_block_sptr<ChannelBlockDMR>(
+        "dmr", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
+        /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
+        kRfSampleRate, kAudioSampleRate, /*dmrSlot=*/1, /*talkgroupFilter=*/std::nullopt,
+        /*existingDecodeBlock=*/nullptr, /*otherSlotPresent=*/false, [](ChannelStatusUpdate) {});
+
+    CHECK(dmr->getMinimumScanTime() >= 1.0);
+}
+
 TEST_CASE("ChannelBlockDMR: second slot at the same freq_hz shares the first slot's decodeBlock()") {
     auto ts1 = gnuradio::make_block_sptr<ChannelBlockDMR>(
         "ts1", "Test TS1", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,

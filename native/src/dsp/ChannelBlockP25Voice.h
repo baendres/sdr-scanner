@@ -42,6 +42,12 @@ public:
     void setAudioGain(double audioGain_dB) override;
     ChannelStatus getStatus() override;
 
+    // Same reasoning as ChannelBlockDMR::getMinimumScanTime() - DSDcc's P25 Phase 1 frame sync
+    // needs continuous, uninterrupted discriminator samples across several bursts, which the
+    // base class's 0.1s default (sized for analog squelch, not digital frame sync) can't
+    // provide under round-robin scanning.
+    double getMinimumScanTime() const override { return 1.5; }
+
     std::shared_ptr<DsdccDecodeBlock> decodeBlock() const { return decodeBlock_; }
 
 private:

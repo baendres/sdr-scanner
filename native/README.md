@@ -717,6 +717,25 @@ Fixed by making `DsdccDecodeBlock::general_work()` always produce a fixed-rate o
 (zero-filled when nothing's been decoded yet, exactly like every other channel mode's audio gate
 already does when squelched) - see `tests/test_dsdcc_decode_block.cpp`.
 
+**Fixed bug: DMR/P25 channels never actually got a real chance to sync, even with a strong
+signal, because the round-robin scanner scheduler was cutting off their RF exposure every
+~100ms.** Unlike FM/AM's power squelch (which only needs a fraction of a second to sample carrier
+level), DSDcc's frame sync needs *continuous* discriminator samples across several consecutive
+TDMA bursts to lock on at all - any gap and it has no way to know time passed, so the next
+fragment starts the sync hunt over from an arbitrary phase relationship to the transmitter's TDMA
+clock. `ChannelBlockBase::getMinimumScanTime()` defaults to 0.1s (sized for analog squelch,
+`ChannelBlockBase.h`), and neither `ChannelBlockDMR` nor `ChannelBlockP25Voice` overrode it - so
+`SoapyReceiver::checkCurrentWindow()` would consider a DMR/P25 window eligible to hop away to the
+next window in the rotation after just 100ms, regardless of whether DSDcc had any chance to
+sync yet. Diagnosed via a real-hardware capture (with the sync-mismatch diagnostic logging above)
+that showed sync constantly flapping between correct repeater framing (`DMRDataP`/`DMRVoiceP`)
+and DSDcc's uncertain fallback (`DMRDataMS`/`DMRVoiceMS`), never holding past the same second -
+initially suspected as a weak-signal issue, ruled out once confirmed the repeater's antenna was
+~20 feet from the receiver (about as strong a signal as real-world DMR reception gets). Fixed by
+overriding `getMinimumScanTime()` to 1.5s on both classes, giving the scheduler a guaranteed
+continuous dwell long enough for DSDcc to actually get a fair shot - see
+`tests/test_channel_dmr.cpp`/`tests/test_channel_p25voice.cpp`'s `getMinimumScanTime()` checks.
+
 **Known caveats** (unverified against real DMR/P25 RF - no SDR hardware or signal generator
 available in the sandbox this was built in):
 - The C4FM discriminator gain assumes a DMR peak deviation of 1944Hz (`kDmrPeakDeviationHz` in
@@ -732,8 +751,9 @@ available in the sandbox this was built in):
   or real hardware to verify - `tests/test_channel_dmr.cpp` covers the shared-decoder wiring,
   slot independence, and that the flowgraph runs against noise without crashing, not audio
   correctness.
-- **DMR sync sometimes lands on DSDcc's "MS" (direct-mode) sync type instead of "BS"
-  (repeater) sync type against a confirmed conventional 2-slot MOTOTRBO-style repeater.** This
+- **DMR sync sometimes still lands on DSDcc's "MS" (direct-mode) sync type instead of "BS"
+  (repeater) sync type against a confirmed conventional 2-slot MOTOTRBO-style repeater**, even
+  after the `getMinimumScanTime()` fix above gives it a continuous window to lock on. This
   matters because DSDcc's DMR decoder (`dmr.cpp`'s `processVoiceFirstHalfMS()`, upstream, not
   this project's code) hardcodes all MS-framed voice to internal "slot 1" regardless of the
   actual configured `dmrSlot` - "no CACH, only one slot in MS" per its own comment - so a channel
@@ -744,17 +764,17 @@ available in the sandbox this was built in):
   exposes DSDcc's internal per-pattern sync-mismatch counts via
   `DSDDecoder::getDmrDataBsSyncErrors()`/`getDmrVoiceBsSyncErrors()`/etc. (0-24 dibits, tolerance
   2 - see `dsd_sync.cpp`), logged by `DsdccDecodeBlock::logSyncTypeChange()` alongside every
-  sync-type transition. A real-hardware capture with this logging in place showed marginal
-  numbers on both sides of the tolerance line (e.g. `dataBS=3 dataMS=2`, one dibit apart) and
-  sync dropping back to `None` within the same second rather than holding - i.e. this looks like
-  a **weak/borderline-SNR signal landing on the "closer" pattern by chance**, not a structural
-  BS-vs-MS framing bug, especially once a one-time `[R82XX] PLL not locked!` startup warning was
-  ruled out as unrelated (didn't recur). Auto gain (RTL-SDR's default) can undershoot a weaker
-  signal; a manual fixed gain (~30-40dB, set via the receiver's "Gain (dB)" field in the settings
-  page, no rebuild needed) is the first thing to try before assuming a code bug. Not fully
-  confirmed as of this writing - if sync still lands on MS with a strong, reliably-held signal
-  (BS errors far from the tolerance line, not just barely over), that would point back at a real
-  calibration or framing issue worth revisiting with the same diagnostic logging.
+  sync-type transition. A real-hardware capture with this logging in place (before the
+  `getMinimumScanTime()` fix, so still under the 0.1s round-robin cutoff) showed **both**
+  `DMRDataP`/`DMRVoiceP` (correct repeater framing, e.g. `voiceBS=2 voiceMS=3` - a clean win) and
+  `DMRDataMS`/`DMRVoiceMS` on the *same* channel/frequency at different moments, which a real
+  repeater can't alternate between transmission to transmission - strong evidence the
+  discontinuous-sampling bug above (not RF signal quality) was scrambling sync attempts and
+  occasionally landing on the wrong-but-close pattern by chance, especially once weak signal was
+  ruled out (repeater antenna ~20 feet from the receiver). Whether the `getMinimumScanTime()` fix
+  resolves this fully, or whether an independent BS-vs-MS issue remains once sync gets a fair
+  continuous shot, needs a fresh real-hardware capture with both fixes in place - not confirmed
+  as of this writing.
 
 ## Explicitly deferred
 
