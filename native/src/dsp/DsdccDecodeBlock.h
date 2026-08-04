@@ -46,7 +46,7 @@ public:
     DSDcc::DSDDecoder& decoder() { return decoder_; }
 
 private:
-    void pollDecodedAudio();
+    void pollDecodedAudio(int itemsThisCall);
     void logSyncTypeChange();
 
     DSDcc::DSDDecoder decoder_;

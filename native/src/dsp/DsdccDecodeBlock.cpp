@@ -62,17 +62,27 @@ int DsdccDecodeBlock::general_work(int noutput_items,
     const float* in = static_cast<const float*>(input_items[0]);
     int nin = ninput_items[0];
 
-    // Must advance at a fixed rate (kInputPerAudioSample input samples per output item) rather
-    // than only whenever DSDcc happens to have decoded something: this feeds
-    // ScanWindowBlock::mixerAdd_ (a synchronous gr::blocks::add_ff), which can't produce ANY
-    // output until every one of its connected ports has data. A channel that goes fully silent
-    // (produces zero items) for as long as it isn't mid-voice-frame - which in production is
-    // most of the time - silently stalls the *entire* window's audio, not just its own, and the
-    // backpressure eventually freezes every other channel's RSSI/volume computation too. Real
-    // decoded audio (pending1_/pending2_) is used when available; gaps are zero-filled, exactly
-    // like every other channel mode's audio gate (mute_ff) already does when squelched.
-    int itemsToProduce = std::min(nin / kInputPerAudioSample, noutput_items);
-    int consumed = itemsToProduce * kInputPerAudioSample;
+    // Must always consume ALL available input at the real 48kHz rate, regardless of how much
+    // *output* buffer space (noutput_items) happens to be available this call - this must never
+    // be the thing that throttles input consumption. DSDcc's frame sync assumes a truly
+    // continuous, real-time discriminator stream; falling behind here - even briefly, even
+    // though GNU Radio's own buffering would normally absorb it losslessly - risks GNU Radio
+    // applying backpressure all the way back to the real-time RF source, which can genuinely
+    // drop hardware samples and break sync exactly like the window-hopping discontinuity bug
+    // fixed elsewhere in this codebase (Scanner/SoapyReceiver's round-robin). An earlier version
+    // of this fix capped input consumption at noutput_items*kInputPerAudioSample, which
+    // reintroduced exactly that risk - confirmed on real hardware as sync achieving a clean lock
+    // (low DMR mismatch count) then losing it well under a second later, during a known-active,
+    // continuous real transmission where nothing should have interrupted it.
+    //
+    // So: consume everything available now, and decouple that from how much gets *written out*
+    // this call - pollDecodedAudio() below tops up pending1_/pending2_ (real decoded audio, or
+    // zero-fill once there's nothing new - same fixed-rate-output reasoning as before) by
+    // however many audio-rate items this call's input earns, regardless of noutput_items; only
+    // draining the output arrays is bounded by noutput_items, with any backlog simply waiting in
+    // the queue for a later call instead of ever throttling input.
+    int itemsThisCall = nin / kInputPerAudioSample;
+    int consumed = itemsThisCall * kInputPerAudioSample;
 
     for (int i = 0; i < consumed; i++) {
         float clamped = std::max(-1.0f, std::min(1.0f, in[i]));
@@ -81,21 +91,19 @@ int DsdccDecodeBlock::general_work(int noutput_items,
     consume_each(consumed);
 
     logSyncTypeChange();
-    pollDecodedAudio();
+    pollDecodedAudio(itemsThisCall);
 
     float* out1 = static_cast<float*>(output_items[0]);
     float* out2 = static_cast<float*>(output_items[1]);
-    int n1 = std::min(static_cast<int>(pending1_.size()), itemsToProduce);
-    int n2 = std::min(static_cast<int>(pending2_.size()), itemsToProduce);
+    int n1 = std::min(static_cast<int>(pending1_.size()), noutput_items);
+    int n2 = std::min(static_cast<int>(pending2_.size()), noutput_items);
     std::copy(pending1_.begin(), pending1_.begin() + n1, out1);
     std::copy(pending2_.begin(), pending2_.begin() + n2, out2);
     pending1_.erase(pending1_.begin(), pending1_.begin() + n1);
     pending2_.erase(pending2_.begin(), pending2_.begin() + n2);
-    std::fill(out1 + n1, out1 + itemsToProduce, 0.0f);
-    std::fill(out2 + n2, out2 + itemsToProduce, 0.0f);
 
-    produce(0, itemsToProduce);
-    produce(1, itemsToProduce);
+    produce(0, n1);
+    produce(1, n2);
     return WORK_CALLED_PRODUCE;
 }
 
@@ -123,7 +131,10 @@ void DsdccDecodeBlock::logSyncTypeChange() {
     lastTransitionAt_ = now;
 }
 
-void DsdccDecodeBlock::pollDecodedAudio() {
+void DsdccDecodeBlock::pollDecodedAudio(int itemsThisCall) {
+    size_t before1 = pending1_.size();
+    size_t before2 = pending2_.size();
+
     int n1 = 0;
     short* a1 = decoder_.getAudio1(n1);
     for (int i = 0; i < n1; i++) pending1_.push_back(a1[i] / kInt16Scale);
@@ -133,6 +144,20 @@ void DsdccDecodeBlock::pollDecodedAudio() {
     short* a2 = decoder_.getAudio2(n2);
     for (int i = 0; i < n2; i++) pending2_.push_back(a2[i] / kInt16Scale);
     if (n2 > 0) decoder_.resetAudio2();
+
+    // Top up with silence so each queue grows by exactly itemsThisCall this call (matching how
+    // many audio-rate items this call's real-time input earns - see general_work()'s header
+    // comment) whenever DSDcc didn't hand back that much real decoded audio on its own; if it
+    // handed back *more* (a genuine decode burst), let the queue grow by the extra rather than
+    // dropping any of it.
+    size_t added1 = pending1_.size() - before1;
+    size_t added2 = pending2_.size() - before2;
+    if (added1 < static_cast<size_t>(itemsThisCall)) {
+        pending1_.resize(pending1_.size() + (static_cast<size_t>(itemsThisCall) - added1), 0.0f);
+    }
+    if (added2 < static_cast<size_t>(itemsThisCall)) {
+        pending2_.resize(pending2_.size() + (static_cast<size_t>(itemsThisCall) - added2), 0.0f);
+    }
 }
 
 } // namespace sdrscan
