@@ -16,13 +16,14 @@
 #include <gnuradio/sptr_magic.h>
 
 #include "../src/dsp/ChannelBlockDMR.h"
-#include "../src/dsp/ScanWindow.h"
 
 using namespace sdrscan;
 
 namespace {
 
-// Divisible by 48000 (ChannelBlockDMR's required discriminator rate) - see ChannelBlockDMR.cpp.
+// Divisible by 48000 (ChannelBlockDMR's discriminator rate) so most of these tests exercise the
+// plain integer-decimation path - see the dedicated non-multiple-rate test below for the rational-
+// resampler correction path.
 constexpr int kRfSampleRate = 2'400'000;
 constexpr int kAudioSampleRate = 16'000;
 
@@ -54,12 +55,33 @@ TEST_CASE("ChannelBlockDMR: rejects a slot number other than 1 or 2") {
         /*existingDecodeBlock=*/nullptr, /*otherSlotPresent=*/false, [](ChannelStatusUpdate) {}));
 }
 
-TEST_CASE("ChannelBlockDMR: rejects an RF sample rate that isn't a whole multiple of 48000Hz") {
-    CHECK_THROWS(gnuradio::make_block_sptr<ChannelBlockDMR>(
-        "bad", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
+// Regression test: RF sample rates that aren't a whole multiple of 48000Hz used to be rejected
+// outright (forcing the whole scanner to share one DMR-compatible sample rate across every
+// window/receiver - a real usability problem the user pushed back on, since it meant DMR capped
+// every window's bandwidth, not just DMR ones). ChannelBlockDMR now corrects the remainder with
+// its own internal rational resampler (see its constructor) instead, so any RF sample rate that
+// covers the channel's own bandwidth needs works - this just checks it builds and runs without
+// throwing at a rate the old exact-multiple check would have rejected (2048000/48000 = 42.67).
+TEST_CASE("ChannelBlockDMR: works at an RF sample rate that isn't a whole multiple of 48000Hz") {
+    constexpr int kNonMultipleRfSampleRate = 2'048'000;
+    auto tb = gr::make_top_block("test-dmr-nonmultiple-rate");
+
+    auto dmr = gnuradio::make_block_sptr<ChannelBlockDMR>(
+        "dmr", "Test", /*mute=*/false, /*solo=*/std::nullopt, /*hold=*/false,
         /*audioGain_dB=*/0.0, /*dwellTime_s=*/3.0, /*channelFreq_hz=*/0, /*hardwareFreq_hz=*/0,
-        /*rfSampleRate=*/1'000'000, kAudioSampleRate, /*dmrSlot=*/1, /*talkgroupFilter=*/std::nullopt,
-        /*existingDecodeBlock=*/nullptr, /*otherSlotPresent=*/false, [](ChannelStatusUpdate) {}));
+        kNonMultipleRfSampleRate, kAudioSampleRate, /*dmrSlot=*/1, /*talkgroupFilter=*/std::nullopt,
+        /*existingDecodeBlock=*/nullptr, /*otherSlotPresent=*/false, [](ChannelStatusUpdate) {});
+
+    auto noise = gr::analog::noise_source_c::make(gr::analog::GR_GAUSSIAN, 0.1, 42);
+    auto head = gr::blocks::head::make(sizeof(gr_complex),
+                                        static_cast<uint64_t>(kNonMultipleRfSampleRate * 0.05));
+    auto sink = gr::blocks::null_sink::make(sizeof(float));
+
+    tb->connect(noise, 0, head, 0);
+    tb->connect(head, 0, dmr, 0);
+    tb->connect(dmr, 0, sink, 0);
+
+    REQUIRE_NOTHROW(tb->run());
 }
 
 TEST_CASE("ChannelBlockDMR: forceActive forces one slot ACTIVE without affecting the other") {
@@ -103,7 +125,8 @@ TEST_CASE("ChannelBlockDMR: forceActive forces one slot ACTIVE without affecting
 // DsdccDecodeBlock's io_signature requires exactly 2 connected outputs, so gr::top_block::start()
 // - called from SoapyReceiver's own thread when the flowgraph is (re)built - would throw
 // "insufficient connected output ports" uncaught, crashing the whole process (this bug was latent
-// until the "give DMR windows their own RF bandwidth" fix let DMR windows actually build at all).
+// until an earlier fix let DMR windows actually build at all - see git history for the full
+// chain of DMR crash fixes).
 TEST_CASE("ChannelBlockDMR: a lone slot with no sibling starts without a flowgraph validation error") {
     auto tb = gr::make_top_block("test-dmr-lone-slot");
 
@@ -122,31 +145,4 @@ TEST_CASE("ChannelBlockDMR: a lone slot with no sibling starts without a flowgra
     tb->connect(ts2Only, 0, sink, 0);
 
     REQUIRE_NOTHROW(tb->run());
-}
-
-// Regression test for a real crash: SoapyReceiver::rebuildGraph() used to pick an RF sample rate
-// with no regard for whether the window contained a DMR channel, so on hardware whose narrowest
-// covering rate wasn't a multiple of 48000Hz (e.g. an RTL-SDR offering 2048000, which isn't -
-// see kRtlSdrSampleRates in SoapyReceiver.cpp), ChannelBlockDMR's constructor would throw on the
-// receiver's own thread, uncaught, killing the whole process (see ChannelBlockBase's/
-// SoapyReceiver::startWindow()'s "uncaught exception aborts the entire process" note).
-TEST_CASE("ScanWindow::selectRfSampleRate skips non-48000-multiple rates when DMR is required") {
-    // Mirrors SoapyReceiver.cpp's kRtlSdrSampleRates - only 1536000 and 1920000 are whole
-    // multiples of 48000.
-    const std::vector<int> rtlSdrRates = {1'024'000, 1'536'000, 1'792'000, 1'920'000, 2'048'000};
-
-    // Without the DMR constraint, the narrowest rate that covers the bandwidth wins as before.
-    CHECK(ScanWindow::selectRfSampleRate(rtlSdrRates, /*rfBandwidth=*/1'000'000,
-                                          /*requireDmrCompatibleRate=*/false) == 1'024'000);
-
-    // With it, that same narrowest-covering rate (1024000) isn't a multiple of 48000, so it must
-    // be skipped in favor of the next one that is (1536000), not thrown from ChannelBlockDMR.
-    CHECK(ScanWindow::selectRfSampleRate(rtlSdrRates, /*rfBandwidth=*/1'000'000,
-                                          /*requireDmrCompatibleRate=*/true) == 1'536'000);
-}
-
-TEST_CASE("ScanWindow::selectRfSampleRate throws when no rate is both wide enough and DMR-compatible") {
-    const std::vector<int> rates = {1'024'000, 2'048'000}; // neither is a multiple of 48000
-    CHECK_THROWS(ScanWindow::selectRfSampleRate(rates, /*rfBandwidth=*/500'000,
-                                                 /*requireDmrCompatibleRate=*/true));
 }

@@ -5,6 +5,7 @@
 #include <gnuradio/sptr_magic.h>
 
 #include <algorithm>
+#include <numeric>
 #include <stdexcept>
 
 namespace sdrscan {
@@ -15,8 +16,12 @@ namespace {
 // filter width used by other DMR/C4FM decoders.
 constexpr double kHalfBandwidthHz = 6250.0;
 // DSDcc's DSDRate4800 (10 samples/symbol @ 4800 baud) is what setDecodeMode(DSDDecodeDMR,...)
-// selects internally - see DsdccDecodeBlock. Shared with Const.h's DMR_DISCRIMINATOR_RATE_HZ so
-// ScanWindow::selectRfSampleRate() can pick a compatible RF sample rate up front.
+// selects internally - see DsdccDecodeBlock. The channelizer below always lands exactly on this
+// rate regardless of rfSampleRate, via a rational resampler correcting whatever the integer
+// decimation stages don't evenly reach - see its comment. Shared with Const.h's
+// DMR_DISCRIMINATOR_RATE_HZ, which OpenWebRX+'s digiham (a from-scratch, non-DSDcc DMR decoder)
+// also targets - see native/README.md - confirming this is a DMR-signal-math constant (4800 baud
+// x 10 samples/symbol), not a DSDcc-specific quirk.
 constexpr int kDiscriminatorRate = DMR_DISCRIMINATOR_RATE_HZ;
 // Assumed DMR (ETSI TS 102 361) 4FSK outer symbol deviation - unverified against real DMR RF in
 // this sandbox (no hardware available); the quad-demod gain this drives just needs to land
@@ -67,11 +72,12 @@ ChannelBlockDMR::ChannelBlockDMR(const std::string& channelId,
         blockRfDiscardSink_ = gr::blocks::null_sink::make(sizeof(gr_complex));
         connect(self(), 0, blockRfDiscardSink_, 0);
     } else {
-        if (rfSampleRate % kDiscriminatorRate != 0) {
-            throw std::runtime_error(
-                "ChannelBlockDMR: RF sample rate must be a whole multiple of 48000Hz for DMR channels");
-        }
-        int inputDecimation = rfSampleRate / kDiscriminatorRate;
+        // Doesn't need to divide rfSampleRate evenly (see the rational-resampler correction
+        // below) - just picks how much the two integer FIR stages decimate before that
+        // correction, so this floors to the largest whole decimation that keeps the
+        // intermediate rate at or above kDiscriminatorRate (preserving channel bandwidth/
+        // anti-aliasing margin), same as it always has for already-compatible rates.
+        int inputDecimation = std::max(1, rfSampleRate / kDiscriminatorRate);
         double freqOffset_Hz = static_cast<double>(channelFreq_hz - hardwareFreq_hz);
 
         auto [stage1Decim, stage2Decim] = splitDecimation(inputDecimation, kMinStage2Decim);
@@ -94,6 +100,35 @@ ChannelBlockDMR::ChannelBlockDMR(const std::string& channelId,
             channelized = blockChannelFilter_;
         }
 
+        // The integer decimation stages above land the RF rate at rfSampleRate/inputDecimation,
+        // which only equals kDiscriminatorRate exactly when rfSampleRate happens to be a whole
+        // multiple of it. DSDcc's symbol-timing recovery needs samples at exactly 48000Hz (see
+        // kDiscriminatorRate's comment) or it'll never lock onto the real 4800-baud symbol clock,
+        // so correct the remainder with a rational resampler computed as an exact fraction
+        // (avoiding any floating-point rate error): the two decimation stages produce
+        // rfSampleRate/inputDecimation exactly (an exact rational, not necessarily integer, since
+        // FIR decimation just keeps every Nth sample regardless of what "sample rate" labels it),
+        // so resampling that by kDiscriminatorRate*inputDecimation/rfSampleRate lands on exactly
+        // kDiscriminatorRate. Reduced via GCD to the smallest equivalent ratio, same common-
+        // factor-reduction idea as the decoded-audio resampler below.
+        int64_t resamplerInterp = static_cast<int64_t>(kDiscriminatorRate) * inputDecimation;
+        int64_t resamplerDecim = rfSampleRate;
+        int64_t g = std::gcd(resamplerInterp, resamplerDecim);
+        resamplerInterp /= g;
+        resamplerDecim /= g;
+
+        gr::basic_block_sptr discriminatorInput = channelized;
+        if (resamplerInterp != resamplerDecim) {
+            auto rateCorrectorTaps = gr::filter::firdes::low_pass(
+                1.0, static_cast<double>(resamplerInterp),
+                0.5 * std::min(1.0, static_cast<double>(resamplerInterp) / static_cast<double>(resamplerDecim)),
+                0.05);
+            blockRateCorrector_ = gr::filter::rational_resampler_ccf::make(
+                static_cast<int>(resamplerInterp), static_cast<int>(resamplerDecim), rateCorrectorTaps);
+            connect(channelized, 0, blockRateCorrector_, 0);
+            discriminatorInput = blockRateCorrector_;
+        }
+
         double demodGain = kDiscriminatorRate / (2.0 * M_PI * kDmrPeakDeviationHz);
         blockQuadDemod_ = gr::analog::quadrature_demod_cf::make(demodGain);
 
@@ -101,7 +136,7 @@ ChannelBlockDMR::ChannelBlockDMR(const std::string& channelId,
             DSDcc::DSDDecoder::DSDDecodeDMR, /*tdmaStereo=*/true);
 
         connect(self(), 0, blockFreqXlatingFilter_, 0);
-        connect(channelized, 0, blockQuadDemod_, 0);
+        connect(discriminatorInput, 0, blockQuadDemod_, 0);
         connect(blockQuadDemod_, 0, decodeBlock_, 0);
 
         if (!otherSlotPresent) {

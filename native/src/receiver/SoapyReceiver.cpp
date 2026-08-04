@@ -5,7 +5,6 @@
 #include <gnuradio/soapy/soapy_types.h>
 #include <SoapySDR/Device.hpp>
 
-#include <algorithm>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -139,9 +138,7 @@ void SoapyReceiver::postScanWindowConfigs(std::vector<ScanWindowConfig> configs)
 }
 
 std::shared_ptr<ScanWindow> SoapyReceiver::buildWindow(const ScanWindowConfig& cfg) {
-    bool hasDmrChannel = std::any_of(cfg.channelConfigs.begin(), cfg.channelConfigs.end(),
-                                      [](const ChannelConfig& cc) { return cc.mode == ChannelMode::DMR; });
-    int rfSampleRate = ScanWindow::selectRfSampleRate(getSampleRates(), cfg.rfBandwidth, hasDmrChannel);
+    int rfSampleRate = ScanWindow::selectRfSampleRate(getSampleRates(), cfg.rfBandwidth);
     return std::make_shared<ScanWindow>(cfg, rfSampleRate, statusCallback_);
 }
 

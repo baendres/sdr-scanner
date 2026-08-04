@@ -399,35 +399,13 @@ void Scanner::buildWindows() {
         }
     }
 
-    // If any enabled channel anywhere is DMR, every window on every receiver needs to share one
-    // single RF sample rate that's a whole multiple of 48000Hz (see ChannelBlockDMR/ScanWindow::
-    // selectRfSampleRate) - NOT just the specific windows containing a DMR channel. Windows are
-    // shared across all receivers (postScanWindowConfigs() below broadcasts the same list to
-    // every one of them) and picked up interchangeably, and SoapyReceiver::startWindow() actually
-    // reprograms the hardware's sample rate whenever a window asks for a different one than the
-    // last - a real ~100ms hit - so letting bandwidth vary window-to-window would mean constant
-    // expensive retuning on every hop between a DMR and non-DMR window, not just DMR ones failing
-    // to build. Baking the constraint into the single global `bandwidth` value instead keeps one
-    // fixed rate for the whole scan, with window grouping (below) naturally fitting within it -
-    // exactly like the non-DMR case already works, just with a smaller shared budget.
-    bool anyDmrEnabled = std::any_of(enabledChannels.begin(), enabledChannels.end(),
-                                      [](const ChannelConfig& cc) { return cc.mode == ChannelMode::DMR; });
-
     int64_t bandwidth = -1;
     for (auto& receiver : receivers_) {
         int64_t maxUsable = -1;
         for (int rate : receiver->getSampleRates()) {
-            if (rate > MAX_RF_SAMPLERATE) continue;
-            if (anyDmrEnabled && rate % DMR_DISCRIMINATOR_RATE_HZ != 0) continue;
-            maxUsable = std::max<int64_t>(maxUsable, rate);
+            if (rate <= MAX_RF_SAMPLERATE) maxUsable = std::max<int64_t>(maxUsable, rate);
         }
-        if (maxUsable < 0) {
-            throw std::runtime_error(
-                anyDmrEnabled
-                    ? "Receiver has no usable sample rate <= MAX_RF_SAMPLERATE that's also a "
-                      "whole multiple of 48000Hz (required because a DMR channel is enabled)"
-                    : "Receiver has no usable sample rate <= MAX_RF_SAMPLERATE");
-        }
+        if (maxUsable < 0) throw std::runtime_error("Receiver has no usable sample rate <= MAX_RF_SAMPLERATE");
         bandwidth = (bandwidth < 0) ? maxUsable : std::min(bandwidth, maxUsable);
     }
 

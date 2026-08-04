@@ -76,6 +76,10 @@ private:
     // shared-tap instance leaves these null and just wires decodeBlock_'s port directly.
     gr::filter::freq_xlating_fir_filter_ccf::sptr blockFreqXlatingFilter_;
     gr::filter::fir_filter_ccf::sptr blockChannelFilter_;
+    // Only set when rfSampleRate isn't already a whole multiple of the discriminator rate - see
+    // the constructor's rational-resampler comment. Null (skipped) when it divides evenly, same
+    // as before this correction existed.
+    gr::filter::rational_resampler_ccf::sptr blockRateCorrector_;
     gr::analog::quadrature_demod_cf::sptr blockQuadDemod_;
     gr::blocks::null_sink::sptr blockRfDiscardSink_; // shared-tap instance only
     // Owning instance only, and only when otherSlotPresent is false (see constructor) - DsdccDecodeBlock

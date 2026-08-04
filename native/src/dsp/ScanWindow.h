@@ -60,12 +60,10 @@ public:
 
     // Picks an RF samplerate from `availableRates` sufficient to cover the window's
     // rfBandwidth, and a resulting audio samplerate (decimates cleanly to the global
-    // AUDIO_SAMPLERATE if possible, otherwise the closest rate that divides evenly).
-    // requireDmrCompatibleRate: pass true if any channel in this window is ChannelMode::DMR -
-    // restricts candidates to whole multiples of DMR_DISCRIMINATOR_RATE_HZ (see
-    // ChannelBlockDMR.cpp), since a rate that doesn't divide evenly makes its constructor throw.
-    static int selectRfSampleRate(const std::vector<int>& availableRates, int64_t rfBandwidth,
-                                   bool requireDmrCompatibleRate);
+    // AUDIO_SAMPLERATE if possible, otherwise the closest rate that divides evenly). No longer
+    // needs to know about DMR channels - ChannelBlockDMR now works at any RF sample rate via its
+    // own internal rational resampler (see its constructor).
+    static int selectRfSampleRate(const std::vector<int>& availableRates, int64_t rfBandwidth);
     static int selectAudioSampleRate(int rfSampleRate);
 
 private:
