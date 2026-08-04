@@ -717,6 +717,21 @@ Fixed by making `DsdccDecodeBlock::general_work()` always produce a fixed-rate o
 (zero-filled when nothing's been decoded yet, exactly like every other channel mode's audio gate
 already does when squelched) - see `tests/test_dsdcc_decode_block.cpp`.
 
+**Fixed regression from the fix above: input consumption was throttled by output buffer space,
+which could break a lock DSDcc had genuinely already achieved.** The first version of the fix
+capped how many input samples got fed to `decoder_.run()` each call at
+`noutput_items * kInputPerAudioSample` - meaning whenever downstream output buffer space was
+limited for a call, the decoder fell behind the real-time 48kHz input rate. That's a problem
+regardless of whether GNU Radio's own buffering could absorb the delay losslessly in principle:
+falling behind risks backpressure propagating all the way back to the real-time RF source, which
+can genuinely drop hardware samples - the same failure mode as the round-robin discontinuity bug
+below, just reached a different way. Confirmed on real hardware, keying a known-active transmission
+end to end: sync achieved a clean, low-error lock (`dataBS=2`, well inside DSDcc's 2/24 tolerance)
+and then lost it well under a second later, mid-transmission, with nothing that should have
+interrupted it. Fixed by decoupling input consumption from output space entirely - always consume
+everything available at the real rate, and let any output backlog wait in `pending1_`/`pending2_`
+for a later call instead of ever throttling input.
+
 **Fixed bug: DMR/P25 channels never actually got a real chance to sync, even with a strong
 signal, because the round-robin scanner scheduler was cutting off their RF exposure every
 ~100ms.** Unlike FM/AM's power squelch (which only needs a fraction of a second to sample carrier
