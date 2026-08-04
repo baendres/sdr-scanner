@@ -17,6 +17,12 @@ namespace {
 // real-world tuning if decode quality is poor.
 constexpr float kInt16Scale = 32767.0f;
 
+// Input (48kHz discriminator, see this class's header) samples per audio-rate output item -
+// matches set_relative_rate() below and mbelib's fixed 8kHz decode rate (also duplicated as
+// kDiscriminatorRate/kMbeAudioRate in ChannelBlockDMR.cpp/ChannelBlockP25Voice.cpp, which
+// resample this block's output the rest of the way to each window's actual audio rate).
+constexpr int kInputPerAudioSample = 48000 / 8000;
+
 const char* syncTypeName(DSDcc::DSDDecoder::DSDSyncType t) {
     using T = DSDcc::DSDDecoder::DSDSyncType;
     switch (t) {
@@ -53,26 +59,40 @@ int DsdccDecodeBlock::general_work(int noutput_items,
     const float* in = static_cast<const float*>(input_items[0]);
     int nin = ninput_items[0];
 
-    for (int i = 0; i < nin; i++) {
+    // Must advance at a fixed rate (kInputPerAudioSample input samples per output item) rather
+    // than only whenever DSDcc happens to have decoded something: this feeds
+    // ScanWindowBlock::mixerAdd_ (a synchronous gr::blocks::add_ff), which can't produce ANY
+    // output until every one of its connected ports has data. A channel that goes fully silent
+    // (produces zero items) for as long as it isn't mid-voice-frame - which in production is
+    // most of the time - silently stalls the *entire* window's audio, not just its own, and the
+    // backpressure eventually freezes every other channel's RSSI/volume computation too. Real
+    // decoded audio (pending1_/pending2_) is used when available; gaps are zero-filled, exactly
+    // like every other channel mode's audio gate (mute_ff) already does when squelched.
+    int itemsToProduce = std::min(nin / kInputPerAudioSample, noutput_items);
+    int consumed = itemsToProduce * kInputPerAudioSample;
+
+    for (int i = 0; i < consumed; i++) {
         float clamped = std::max(-1.0f, std::min(1.0f, in[i]));
         decoder_.run(static_cast<short>(std::lround(clamped * kInt16Scale)));
     }
-    consume_each(nin);
+    consume_each(consumed);
 
     logSyncTypeChange();
     pollDecodedAudio();
 
     float* out1 = static_cast<float*>(output_items[0]);
     float* out2 = static_cast<float*>(output_items[1]);
-    int n1 = std::min(static_cast<int>(pending1_.size()), noutput_items);
-    int n2 = std::min(static_cast<int>(pending2_.size()), noutput_items);
+    int n1 = std::min(static_cast<int>(pending1_.size()), itemsToProduce);
+    int n2 = std::min(static_cast<int>(pending2_.size()), itemsToProduce);
     std::copy(pending1_.begin(), pending1_.begin() + n1, out1);
     std::copy(pending2_.begin(), pending2_.begin() + n2, out2);
     pending1_.erase(pending1_.begin(), pending1_.begin() + n1);
     pending2_.erase(pending2_.begin(), pending2_.begin() + n2);
+    std::fill(out1 + n1, out1 + itemsToProduce, 0.0f);
+    std::fill(out2 + n2, out2 + itemsToProduce, 0.0f);
 
-    produce(0, n1);
-    produce(1, n2);
+    produce(0, itemsToProduce);
+    produce(1, itemsToProduce);
     return WORK_CALLED_PRODUCE;
 }
 

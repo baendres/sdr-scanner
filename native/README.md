@@ -442,7 +442,9 @@ than a single fixed threshold tolerates well:
   Confirmed on real hardware afterward: the CPU fix worked exactly as measured (the previously
   pinned thread dropped to 0%, overall idle CPU jumped from ~33% to ~72%), and separately, the
   audio itself sounded fine - the chronic "starved" percentage this whole investigation had been
-  chasing turned out not to correspond to an audible problem. But the container was now hitting
+  chasing turned out not to correspond to an audible problem *at the time* (this was all pre-DMR;
+  see below for a real starvation cause that DMR/P25 introduced later). But the container was now
+  hitting
   `docker ps`'s restart counter (confirmed via `docker inspect --format
   'ExitCode={{.State.ExitCode}} RestartCount={{.RestartCount}}'`, `ExitCode=0`), with `Scanner:
   AudioMixer not alive - stopping` in the log immediately before every restart - the liveness
@@ -666,9 +668,12 @@ window RF input down to a 48kHz discriminator stream (C4FM/4FSK quadrature demod
 `ChannelBlockFM` uses for analog FM - no de-emphasis/CTCSS, those are FM-broadcast-specific) and
 feeds it sample-by-sample into `DsdccDecodeBlock` (`src/dsp/DsdccDecodeBlock.{h,cpp}`), a thin
 GNU Radio wrapper around `DSDcc::DSDDecoder` that polls its decoded-audio output each `work()`
-call (decoded audio arrives from mbelib in bursts once DSDcc syncs to a frame, not at a fixed
-rate relative to the 48kHz input - `DsdccDecodeBlock` is a `gr::block`, not `gr::sync_block`, for
-exactly this reason).
+call. mbelib only actually decodes audio in bursts (DSDcc has to first sync to a frame), but
+`DsdccDecodeBlock` always produces output at a fixed rate regardless (zero-filling whenever
+nothing's been decoded yet) - it's a `gr::block`, not `gr::sync_block`, only because of the
+48kHz-in/8kHz-out ratio and to poll DSDcc's decoder state each call, not because its output rate
+is actually variable. This matters more than it sounds: see the real production outage this
+caused, documented below.
 
 **DMR is dual-timeslot**: TS1/TS2 are configured as two independent `ChannelConfig` rows at the
 same `freq_hz` (own mute/hold/status/talkgroup filter per slot - see `dmrSlot`/
@@ -686,10 +691,31 @@ decoder's other output port instead - validated as a supported GNU Radio pattern
 timeslot; **structural**, since changing it changes the block's port wiring/owner-vs-shared-tap
 role, so it goes through the same window rebuild as `freq_hz`/`mode`, not a hot setter) and
 `dmrTalkgroupFilter` (optional talkgroup ID allow-list of one - unset unmutes for any talkgroup
-on that slot; hot-settable via `PATCH`/`ChannelSetDmrTalkgroupFilter`). DMR channels require the
-window's RF sample rate to be a whole multiple of 48000Hz (e.g. RTL-SDR's 2.4Msps rate divides
-evenly; throws otherwise) - `ChannelBlockDMR` doesn't resample the RF side, only the mbelib
-8kHz-decoded audio side, down/up to the window's audio rate.
+on that slot; hot-settable via `PATCH`/`ChannelSetDmrTalkgroupFilter`). DMR channels no longer
+require the window's RF sample rate to be a whole multiple of 48000Hz - `ChannelBlockDMR` corrects
+any remainder with its own internal rational resampler (see the constructor), so any RF sample
+rate that covers the channel's own bandwidth works, matching every other mode's requirements. This
+matters because the RF sample rate is a receiver-level property shared by every window on that
+receiver (see `Scanner::buildWindows()`) - it must never be chosen *for* DMR at the cost of every
+other window's bandwidth.
+
+**Fixed bug: a DMR/P25 channel with no active traffic used to silently stall its entire window's
+audio, not just its own.** `ScanWindowBlock::mixerAdd_` (`src/dsp/ScanWindow.cpp`) sums every
+channel in a window via a synchronous `gr::blocks::add_ff`, which can't produce *any* output
+until every one of its connected ports has data. `DsdccDecodeBlock` used to only `produce()`
+however many audio items DSDcc actually had decoded that call - zero, for as long as it wasn't
+mid-voice-frame, which in production (real traffic is intermittent) is most of the time. Since
+`buildWindows()` groups channels purely by frequency proximity, not by mode, a DMR/P25 channel
+sharing a window with FM/AM channels would drag the whole window's audio down with it whenever it
+went quiet - and the backpressure eventually propagated far enough upstream to freeze every
+channel's RSSI/volume/noise-floor telemetry too, since GNU Radio's scheduler stops calling a
+block once its output buffer fills waiting on a downstream consumer that never drains. On real
+hardware this showed up as `AudioMixer` reporting ~100% starvation continuously (not the
+fluctuating 30-68% of the earlier, unrelated pre-DMR investigation above) on every receiver, for
+as long as any currently-tuned window contained a quiet DMR/P25 channel - i.e. most of the time.
+Fixed by making `DsdccDecodeBlock::general_work()` always produce a fixed-rate output stream
+(zero-filled when nothing's been decoded yet, exactly like every other channel mode's audio gate
+already does when squelched) - see `tests/test_dsdcc_decode_block.cpp`.
 
 **Known caveats** (unverified against real DMR/P25 RF - no SDR hardware or signal generator
 available in the sandbox this was built in):

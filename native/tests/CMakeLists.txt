@@ -23,6 +23,7 @@ add_executable(sdrscan_tests
     test_channel_dmr.cpp
     test_channel_p25voice.cpp
     test_p25_tsbk_decoder.cpp
+    test_dsdcc_decode_block.cpp
 )
 target_link_libraries(sdrscan_tests PRIVATE sdrscan_core Catch2::Catch2WithMain)
 

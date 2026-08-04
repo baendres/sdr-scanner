@@ -12,11 +12,19 @@ namespace sdrscan {
 // at 48kHz (matching DSDcc's DSDRate4800 - 10 samples/symbol at 4800 baud, the rate
 // DSDDecoder::setDecodeMode() selects for both DMR and P25 Phase 1 - see
 // native/README.md's DSDcc integration notes) on its single input, and produces two
-// independently-timed decoded-audio streams on its two outputs: DMR timeslot 1 / timeslot 2
-// (output 0 / output 1), or the single P25 Phase 1 voice stream on output 0 only (output 1
-// stays silent - DSDcc has no second "slot" concept for P25p1). Decoded audio arrives from
-// mbelib in bursts, not at a fixed rate relative to the 48kHz input (DSDcc has to first sync to
-// a frame), so this is a gr::block (arbitrary rate) rather than gr::sync_block.
+// two decoded-audio streams on its two outputs: DMR timeslot 1 / timeslot 2 (output 0 / output
+// 1), or the single P25 Phase 1 voice stream on output 0 only (output 1 stays silent - DSDcc
+// has no second "slot" concept for P25p1). mbelib only actually decodes audio in bursts (DSDcc
+// has to first sync to a frame), but general_work() always produces output at a fixed rate
+// (kInputPerAudioSample input samples per output item, matching set_relative_rate() below),
+// zero-filling whenever nothing's been decoded yet - so this is a gr::block (needed for the
+// input:output ratio, and to poll DSDcc's decoder state each call) rather than gr::sync_block,
+// but its *output* behaves like any synchronous audio stream (continuous, real audio or
+// silence, never absent). This matters: it feeds ScanWindowBlock::mixerAdd_, a synchronous
+// gr::blocks::add_ff that can't produce any output until every connected port has data - a
+// channel that ever stopped producing entirely (as an earlier version of this block did
+// whenever DSDcc had nothing newly decoded, which in production is most of the time) would
+// silently stall the whole window's audio, not just its own.
 //
 // Talkgroup ID / voice-activity state (getVoice1On()/getVoice2On(), and the talkgroup number
 // parsed out of DSDDMR::getSlot0Text()/getSlot1Text() - see native/README.md's DSDcc caveats)
