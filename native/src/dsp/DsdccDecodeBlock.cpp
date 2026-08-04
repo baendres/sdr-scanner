@@ -1,4 +1,5 @@
 #include "DsdccDecodeBlock.h"
+#include "../util/Time.h"
 
 #include <gnuradio/io_signature.h>
 
@@ -38,10 +39,12 @@ const char* syncTypeName(DSDcc::DSDDecoder::DSDSyncType t) {
 }
 } // namespace
 
-DsdccDecodeBlock::DsdccDecodeBlock(DSDcc::DSDDecoder::DSDDecodeMode mode, bool tdmaStereo)
+DsdccDecodeBlock::DsdccDecodeBlock(DSDcc::DSDDecoder::DSDDecodeMode mode, bool tdmaStereo,
+                                    std::string logLabel)
     : gr::block("DsdccDecode",
                 gr::io_signature::make(1, 1, sizeof(float)),
-                gr::io_signature::make(2, 2, sizeof(float))) {
+                gr::io_signature::make(2, 2, sizeof(float))),
+      logLabel_(std::move(logLabel)) {
     decoder_.setQuiet();
     decoder_.enableMbelib(true);
     decoder_.setDecodeMode(mode, true);
@@ -99,18 +102,25 @@ int DsdccDecodeBlock::general_work(int noutput_items,
 void DsdccDecodeBlock::logSyncTypeChange() {
     auto syncType = decoder_.getSyncType();
     if (syncType == lastLoggedSyncType_) return;
+    double now = nowUnixSeconds();
+    double heldSeconds = (lastTransitionAt_ > 0.0) ? (now - lastTransitionAt_) : 0.0;
     // DMR-specific diagnostic (see DSDDecoder::getDmrDataBsSyncErrors() etc., a small vendored
     // patch to DSDcc - native/dsdcc-diagnostics.patch): the sync engine's mismatch count for
     // each DMR pattern (0-24 dibits, tolerance 2) from the most recent sync search, regardless
     // of which pattern actually won this transition. Answers "how close was BS-framed (real
     // repeater) sync to matching" whenever MS-framed (direct-mode) sync wins instead, which
     // otherwise looks identical to genuinely MS-only traffic in the plain sync-type log alone.
-    std::cerr << "DsdccDecodeBlock: sync " << syncTypeName(lastLoggedSyncType_) << " -> "
-               << syncTypeName(syncType) << " (DMR sync errors: dataBS=" << decoder_.getDmrDataBsSyncErrors()
+    // heldSeconds (how long the *previous* state lasted) and logLabel_ (which channel/frequency)
+    // together answer "did this ever get a fair continuous shot" directly, instead of having to
+    // infer it from a separate, unlabeled SoapyReceiver hop-count log line.
+    std::cerr << "DsdccDecodeBlock" << (logLabel_.empty() ? "" : " [" + logLabel_ + "]") << ": sync "
+               << syncTypeName(lastLoggedSyncType_) << " -> " << syncTypeName(syncType)
+               << " (held " << heldSeconds << "s) (DMR sync errors: dataBS=" << decoder_.getDmrDataBsSyncErrors()
                << " dataMS=" << decoder_.getDmrDataMsSyncErrors()
                << " voiceBS=" << decoder_.getDmrVoiceBsSyncErrors()
                << " voiceMS=" << decoder_.getDmrVoiceMsSyncErrors() << ", tolerance=2)\n";
     lastLoggedSyncType_ = syncType;
+    lastTransitionAt_ = now;
 }
 
 void DsdccDecodeBlock::pollDecodedAudio() {

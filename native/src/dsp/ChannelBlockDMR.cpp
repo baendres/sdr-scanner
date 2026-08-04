@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <numeric>
 #include <stdexcept>
+#include <string>
 
 namespace sdrscan {
 
@@ -133,7 +134,8 @@ ChannelBlockDMR::ChannelBlockDMR(const std::string& channelId,
         blockQuadDemod_ = gr::analog::quadrature_demod_cf::make(demodGain);
 
         decodeBlock_ = gnuradio::make_block_sptr<DsdccDecodeBlock>(
-            DSDcc::DSDDecoder::DSDDecodeDMR, /*tdmaStereo=*/true);
+            DSDcc::DSDDecoder::DSDDecodeDMR, /*tdmaStereo=*/true,
+            /*logLabel=*/std::to_string(channelFreq_hz));
 
         connect(self(), 0, blockFreqXlatingFilter_, 0);
         connect(discriminatorInput, 0, blockQuadDemod_, 0);

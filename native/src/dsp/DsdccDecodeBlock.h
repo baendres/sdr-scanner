@@ -4,6 +4,7 @@
 
 #include <dsdcc/dsd_decoder.h>
 
+#include <string>
 #include <vector>
 
 namespace sdrscan {
@@ -31,7 +32,11 @@ namespace sdrscan {
 // is polled directly off decoder() by ChannelBlockDMR, not surfaced through the stream ports.
 class DsdccDecodeBlock : public gr::block {
 public:
-    DsdccDecodeBlock(DSDcc::DSDDecoder::DSDDecodeMode mode, bool tdmaStereo);
+    // logLabel is diagnostic-only (prefixes logSyncTypeChange()'s stderr output, e.g. a
+    // channel's freq_hz) - lets a multi-channel/multi-receiver log be attributed to the right
+    // frequency instead of every DsdccDecodeBlock instance logging identically.
+    DsdccDecodeBlock(DSDcc::DSDDecoder::DSDDecodeMode mode, bool tdmaStereo,
+                      std::string logLabel = "");
 
     int general_work(int noutput_items,
                       gr_vector_int& ninput_items,
@@ -45,6 +50,7 @@ private:
     void logSyncTypeChange();
 
     DSDcc::DSDDecoder decoder_;
+    std::string logLabel_;
     std::vector<float> pending1_;
     std::vector<float> pending2_;
     // Diagnostic aid for tuning against real RF (see this class's header caveat) - logs to
@@ -53,6 +59,11 @@ private:
     // logic bug further downstream in ChannelBlockDMR/ChannelBlockP25Voice) just by watching the
     // server console while transmitting on the channel's frequency.
     DSDcc::DSDDecoder::DSDSyncType lastLoggedSyncType_ = DSDcc::DSDDecoder::DSDSyncNone;
+    // When lastLoggedSyncType_ was last set - lets logSyncTypeChange() report how long the
+    // previous sync type actually held, which is what tells "genuinely never held a lock" (a
+    // real decode problem) apart from "held fine, just isn't the pattern expected" from the
+    // plain transition log alone.
+    double lastTransitionAt_ = 0.0;
 };
 
 } // namespace sdrscan
