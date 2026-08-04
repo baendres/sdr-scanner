@@ -732,25 +732,29 @@ available in the sandbox this was built in):
   or real hardware to verify - `tests/test_channel_dmr.cpp` covers the shared-decoder wiring,
   slot independence, and that the flowgraph runs against noise without crashing, not audio
   correctness.
-- **Open investigation: a real 2-slot repeater's TS2 traffic was observed decoding as DSDcc's
-  "MS" (Mobile Station/direct-mode) sync type instead of "BS" (Base Station/repeater) sync type**
-  on real hardware, against a confirmed conventional (non-trunked) MOTOTRBO-style repeater. This
+- **DMR sync sometimes lands on DSDcc's "MS" (direct-mode) sync type instead of "BS"
+  (repeater) sync type against a confirmed conventional 2-slot MOTOTRBO-style repeater.** This
   matters because DSDcc's DMR decoder (`dmr.cpp`'s `processVoiceFirstHalfMS()`, upstream, not
   this project's code) hardcodes all MS-framed voice to internal "slot 1" regardless of the
   actual configured `dmrSlot` - "no CACH, only one slot in MS" per its own comment - so a channel
   configured for `dmrSlot=2` never reports ACTIVE even while genuinely decoding real audio, and
   the audio itself never reaches that channel's output port either (statically wired to
-  "slot 2" data at construction, which MS-framed traffic never populates). Root cause not yet
-  found - candidates are C4FM demod calibration (`kDmrPeakDeviationHz`, symbol timing) in
-  `ChannelBlockDMR`, or something about this specific repeater's actual over-the-air framing
-  that doesn't match generic Tier II BS sync (unconfirmed either way). `native/dsdcc-diagnostics.patch`
-  (applied in both `Dockerfile` and `native-ci.yml`'s DSDcc build steps) exposes DSDcc's internal
-  per-pattern sync-mismatch counts via `DSDDecoder::getDmrDataBsSyncErrors()` /
-  `getDmrVoiceBsSyncErrors()` / etc. (0-24 dibits, tolerance 2 - see `dsd_sync.cpp`), logged by
-  `DsdccDecodeBlock::logSyncTypeChange()` alongside every sync-type transition - e.g. "BS: 3
-  errors (barely missed tolerance) vs MS: 1 error" points at a marginal/calibration-fixable
-  signal, while "BS: 11 errors, MS: 0 errors" points elsewhere. Needs a real capture with this
-  logging in place to make progress; not resolved as of this writing.
+  "slot 2" data at construction, which MS-framed traffic never populates). `native/dsdcc-
+  diagnostics.patch` (applied in both `Dockerfile` and `native-ci.yml`'s DSDcc build steps)
+  exposes DSDcc's internal per-pattern sync-mismatch counts via
+  `DSDDecoder::getDmrDataBsSyncErrors()`/`getDmrVoiceBsSyncErrors()`/etc. (0-24 dibits, tolerance
+  2 - see `dsd_sync.cpp`), logged by `DsdccDecodeBlock::logSyncTypeChange()` alongside every
+  sync-type transition. A real-hardware capture with this logging in place showed marginal
+  numbers on both sides of the tolerance line (e.g. `dataBS=3 dataMS=2`, one dibit apart) and
+  sync dropping back to `None` within the same second rather than holding - i.e. this looks like
+  a **weak/borderline-SNR signal landing on the "closer" pattern by chance**, not a structural
+  BS-vs-MS framing bug, especially once a one-time `[R82XX] PLL not locked!` startup warning was
+  ruled out as unrelated (didn't recur). Auto gain (RTL-SDR's default) can undershoot a weaker
+  signal; a manual fixed gain (~30-40dB, set via the receiver's "Gain (dB)" field in the settings
+  page, no rebuild needed) is the first thing to try before assuming a code bug. Not fully
+  confirmed as of this writing - if sync still lands on MS with a strong, reliably-held signal
+  (BS errors far from the tolerance line, not just barely over), that would point back at a real
+  calibration or framing issue worth revisiting with the same diagnostic logging.
 
 ## Explicitly deferred
 
