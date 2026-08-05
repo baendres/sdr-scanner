@@ -86,7 +86,22 @@ int DsdccDecodeBlock::general_work(int noutput_items,
 
     for (int i = 0; i < consumed; i++) {
         float clamped = std::max(-1.0f, std::min(1.0f, in[i]));
-        decoder_.run(static_cast<short>(std::lround(clamped * kInt16Scale)));
+        short sample = static_cast<short>(std::lround(clamped * kInt16Scale));
+        // DSDDecoder::run() (upstream, dsd_decoder.cpp) treats a literal 0 sample as "external
+        // squelch just closed" - after DSD_SQUELCH_TIMEOUT_SAMPLES (960, 20ms at 48kHz)
+        // consecutive exact zeros it discards whatever sync it has and goes back to hunting.
+        // That's the right behavior for DSDcc's classic calling convention (an external analog
+        // squelch gate feeding literal zeros during real silence, e.g. `rtl_fm | dsd`), but this
+        // class feeds it raw, unsquelched discriminator output - a real, actively-transmitting
+        // signal can still legitimately produce a sample that quantizes to exactly 0 (a fade, a
+        // TDMA idle-slot gap, low-amplitude noise between symbols), which DSDcc then
+        // misinterprets as silence and throws away a perfectly good lock. Confirmed on real
+        // hardware: sync achieved cleanly during a continuous, known 10+ second transmission,
+        // then discarded under a second in - nudging a would-be-zero sample to the smallest
+        // representable nonzero value (amplitude-wise negligible, ~1/32767 of full scale) keeps
+        // DSDcc's own squelch-timeout logic from ever firing on real signal.
+        if (sample == 0) sample = 1;
+        decoder_.run(sample);
     }
     consume_each(consumed);
 

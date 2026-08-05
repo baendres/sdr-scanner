@@ -734,6 +734,22 @@ interrupted it. Fixed by decoupling input consumption from output space entirely
 everything available at the real rate, and let any output backlog wait in `pending1_`/`pending2_`
 for a later call instead of ever throttling input.
 
+**Fixed the actual root cause of "syncs cleanly then loses lock in under a second": DSDcc's own
+built-in squelch-timeout was misfiring on real signal.** The input-throttling fix above was a
+real, legitimate bug (fixed regardless), but confirmed *not* the explanation for this symptom -
+a real hardware test with the PTT held over 10 continuous seconds still lost a clean lock
+(`voiceMS=2`) in well under a second. The actual cause, found by reading DSDcc's source directly:
+`DSDDecoder::run()` (upstream `dsd_decoder.cpp`) treats a literal `0` input sample as "an external
+analog squelch just closed" - after `DSD_SQUELCH_TIMEOUT_SAMPLES` (960, 20ms at 48kHz) consecutive
+exact zeros, it discards whatever sync it has and goes back to hunting. That's correct behavior
+for DSDcc's classic calling convention (`rtl_fm | dsd`, where an external squelch gate feeds
+literal zeros during real silence) - but `DsdccDecodeBlock` feeds it raw, unsquelched discriminator
+output, where a real, actively-transmitting signal can still legitimately produce a sample that
+quantizes to exactly 0 (a fade, a TDMA idle-slot gap, low-amplitude noise between symbols) without
+meaning the transmission stopped. Fixed by nudging any would-be-zero sample to the smallest
+representable nonzero value before handing it to `decoder_.run()` - amplitude-wise negligible
+(~1/32767 of full scale), but keeps DSDcc's own timeout from ever firing on real signal.
+
 **Fixed bug: DMR/P25 channels never actually got a real chance to sync, even with a strong
 signal, because the round-robin scanner scheduler was cutting off their RF exposure every
 ~100ms.** Unlike FM/AM's power squelch (which only needs a fraction of a second to sample carrier
