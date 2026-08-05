@@ -4,12 +4,20 @@
 #include <gnuradio/io_signature.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <iostream>
 
 namespace sdrscan {
 
 namespace {
+
+// Disambiguates log lines when two DsdccDecodeBlock instances are labeled with the same
+// frequency - e.g. the same DMR/P25 channel configured into more than one receiver's scan
+// windows, which builds one independent decoder instance per window. Without this, their
+// sync-transition logs interleave under an identical "[freq]" tag and read as one impossible,
+// self-contradictory state machine (a transition FROM a state that was never logged as entered).
+std::atomic<int> g_nextInstanceId{0};
 // DSDDecoder::run() takes S16LE discriminator samples (the same convention as classic
 // rtl_fm|dsd usage this codec family descends from - see native/README.md). DSDcc's symbol
 // timing/level tracking (DSDSymbol) auto-adapts to the observed min/max level rather than
@@ -45,6 +53,10 @@ DsdccDecodeBlock::DsdccDecodeBlock(DSDcc::DSDDecoder::DSDDecodeMode mode, bool t
                 gr::io_signature::make(1, 1, sizeof(float)),
                 gr::io_signature::make(2, 2, sizeof(float))),
       logLabel_(std::move(logLabel)) {
+    int instanceId = g_nextInstanceId.fetch_add(1);
+    if (!logLabel_.empty()) {
+        logLabel_ += "#" + std::to_string(instanceId);
+    }
     decoder_.setQuiet();
     decoder_.enableMbelib(true);
     decoder_.setDecodeMode(mode, true);

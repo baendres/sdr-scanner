@@ -797,17 +797,37 @@ available in the sandbox this was built in):
   exposes DSDcc's internal per-pattern sync-mismatch counts via
   `DSDDecoder::getDmrDataBsSyncErrors()`/`getDmrVoiceBsSyncErrors()`/etc. (0-24 dibits, tolerance
   2 - see `dsd_sync.cpp`), logged by `DsdccDecodeBlock::logSyncTypeChange()` alongside every
-  sync-type transition. A real-hardware capture with this logging in place (before the
-  `getMinimumScanTime()` fix, so still under the 0.1s round-robin cutoff) showed **both**
-  `DMRDataP`/`DMRVoiceP` (correct repeater framing, e.g. `voiceBS=2 voiceMS=3` - a clean win) and
-  `DMRDataMS`/`DMRVoiceMS` on the *same* channel/frequency at different moments, which a real
-  repeater can't alternate between transmission to transmission - strong evidence the
-  discontinuous-sampling bug above (not RF signal quality) was scrambling sync attempts and
-  occasionally landing on the wrong-but-close pattern by chance, especially once weak signal was
-  ruled out (repeater antenna ~20 feet from the receiver). Whether the `getMinimumScanTime()` fix
-  resolves this fully, or whether an independent BS-vs-MS issue remains once sync gets a fair
-  continuous shot, needs a fresh real-hardware capture with both fixes in place - not confirmed
-  as of this writing.
+  sync-type transition.
+- **Still not confirmed working end-to-end against real DMR traffic, and the evidence from the
+  most recent real-hardware capture (all fixes above in place, PTT held for a sustained
+  transmission) points at "not really syncing at all" rather than a lingering scheduling issue.**
+  Across that entire capture, every winning DMR sync match (`DMRDataP`/`DMRVoiceP`/`DMRDataMS`/
+  `DMRVoiceMS`) landed at exactly 2 mismatched dibits out of 24 - the maximum DSDcc's tolerance
+  allows - with a single exception at 1 mismatch and *none* at 0. A genuine repeater lock, once
+  established, should track the transmitted sync word cleanly (0-1 mismatches) for as long as the
+  signal stays up; matches that only ever squeak in exactly at the tolerance boundary, never
+  better, are the statistical signature of a correlator matching noise (or some other signal
+  entirely - the same capture also showed extensive matches against DSDcc's NXDN sync pattern),
+  not a real fixed sync word. Consistent with this, none of the DMR-type sync events in that
+  capture chained into consecutive ~360ms DMR superframes (see the `DMR_VOX_SUPERFRAME_LEN`
+  finding above) - each was an isolated single event separated from the next by seconds of `None`/
+  other-pattern noise, not the tight back-to-back cadence a real held call should produce. Given
+  the repeater's strong, close-range signal (already ruled out as a weak-signal explanation for
+  earlier symptoms), the next thing to verify is further upstream of DSDcc entirely: whether
+  146955000's C4FM front end (`ChannelBlockDMR`'s freq-xlating filter/channel filter/quad-demod
+  chain) is actually producing clean 4800-baud FSK4 discriminator symbols at all for this specific
+  repeater (frequency/offset accuracy, deviation, filter bandwidth), ideally checked by capturing
+  raw IQ during a confirmed transmission and inspecting/decoding it offline with a known-good tool
+  independent of this codebase.
+- Also fixed alongside the above (not the root cause, but was actively corrupting these
+  diagnostic logs into an apparently self-contradictory sequence): `DsdccDecodeBlock`'s
+  `logLabel` was just the channel frequency, so if the same frequency is configured as a channel
+  on more than one receiver (each gets its own independent front end + `DsdccDecodeBlock`
+  instance - see `ScanWindow::buildChannelBlock`), their sync-transition logs interleaved under an
+  identical `[freq]` tag, reading as one FSM that transitions *from* a state it was never logged
+  as entering. Fixed by appending a process-wide instance counter to the label
+  (`[freq#instanceId]`) so concurrent instances at the same frequency are always distinguishable
+  in the log.
 
 ## Explicitly deferred
 
