@@ -94,7 +94,13 @@ echo "(key up the transmission now if you haven't already)" >&2
 # rtl_fm's default -M fm mode outputs a single-channel signed-16-bit discriminator stream, one
 # sample per output rate tick - exactly the kind of raw demod signal DsdccDecodeBlock consumes
 # (see DsdccDecodeBlock.cpp), just from a completely independent demodulator implementation.
-timeout "$((seconds + 2))s" rtl_fm -f "$freq" -M fm -s 48000 -p "$ppm" "${gain_args[@]}" -d "$device" "$capture" >/dev/null 2>&1 || true
+echo "--- rtl_fm's own stderr output (tuner/PLL/gain diagnostics) follows ---" >&2
+# Only stdout is suppressed (rtl_fm writes samples to $capture, not stdout) - stderr is left to
+# print directly so tuner-level errors like "[R82XX] PLL not locked!" are actually visible instead
+# of silently discarded, which would hide exactly the kind of hardware-level problem this script
+# exists to help rule in or out.
+timeout "$((seconds + 2))s" rtl_fm -f "$freq" -M fm -s 48000 -p "$ppm" "${gain_args[@]}" -d "$device" "$capture" >/dev/null || true
+echo "--- end rtl_fm stderr output ---" >&2
 
 nsamples=$(($(stat -c%s "$capture" 2>/dev/null || echo 0) / 2))
 if [ "$nsamples" -lt 1000 ]; then
