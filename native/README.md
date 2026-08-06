@@ -846,10 +846,18 @@ available in the sandbox this was built in):
   receiver field), the Settings UI, and `SoapyReceiver`'s `set_frequency_correction()` call - see
   `tests/test_database.cpp`'s round-trip/migration tests. **This still needs a real value entered
   and re-tested against real DMR traffic to confirm or rule it out** - measure each receiver's
-  actual PPM error (e.g. `kalibrate-rtl` against a nearby GSM base station, or tuning a known
-  broadcast FM/NOAA frequency and reading off the offset needed to center it) and enter it in
-  Settings before the next capture. If corrected PPM doesn't fix it, the raw-IQ-capture-and-
-  inspect-offline step from the earlier finding is still the next thing to try.
+  actual PPM error and enter it in Settings before the next capture. `kalibrate-rtl`'s usual
+  GSM-based method isn't an option in the US (GSM's long since decommissioned here); use
+  `native/tools/measure_ppm_noaa.sh` instead - a small headless script (wraps `rtl_power`, part of
+  the same `rtl-sdr` apt package already in the Docker image, so no GUI/waterfall needed) that
+  measures a device's crystal error against a NOAA Weather Radio broadcast, which is both
+  available almost everywhere in the US and close in frequency to typical VHF DMR repeaters. Run
+  it once per receiver (`docker compose stop sdr_scanner_native` first to free the USB device,
+  then `docker compose run --rm sdr_scanner_native ./tools/measure_ppm_noaa.sh -d <index>` - see
+  the script's own `-h` for options), enter the printed PPM value in Settings, restart, and
+  optionally re-run the script to confirm the offset dropped near 0. If corrected PPM doesn't fix
+  it, the raw-IQ-capture-and-inspect-offline step from the earlier finding is still the next thing
+  to try.
 - Also fixed alongside the above (not the root cause, but was actively corrupting these
   diagnostic logs into an apparently self-contradictory sequence): `DsdccDecodeBlock`'s
   `logLabel` was just the channel frequency, so if the same frequency is configured as a channel
