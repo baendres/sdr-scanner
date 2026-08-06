@@ -858,6 +858,23 @@ available in the sandbox this was built in):
   optionally re-run the script to confirm the offset dropped near 0. If corrected PPM doesn't fix
   it, the raw-IQ-capture-and-inspect-offline step from the earlier finding is still the next thing
   to try.
+- **PPM correction alone did not fix it - the noise-correlation signature is unchanged with real,
+  measured correction values applied.** Measured both receivers' actual crystal error with
+  `tools/measure_ppm_noaa.sh` (+18.67ppm and +5.58ppm - real, plausible values, not near zero),
+  entered them in Settings, restarted, and captured again with PTT held on TG9/TS2. The sync-error
+  histogram across that capture (141 transitions) is statistically indistinguishable from the
+  uncorrected captures above: 95 of ~121 winning matches still sat at exactly the 2/24 tolerance
+  boundary, only 3 reached 1 mismatch, and *still zero* reached 0. This effectively rules out
+  uncorrected receiver frequency error as the (sole) explanation - whatever's wrong survives a real
+  PPM fix. Added `tools/capture_dmr_histogram.sh` for the next step this rules-out result points
+  at: it captures raw discriminator output directly via `rtl_fm` (bypassing this project's own
+  C4FM chain and DSDcc entirely - genuinely independent, per the "next thing to verify" note
+  above) and prints an ASCII amplitude histogram. A real C4FM/4FSK signal shows ~4 distinct
+  clustered peaks; noise or a badly-received signal shows one central hump or a flat spread -
+  validated against synthetic 4-level and single-Gaussian data before relying on it (watch for
+  `od`'s duplicate-line elision silently corrupting the min/max scan on real repetitive sample
+  data if this is ever reimplemented - `-v` disables it, see the script). **Still needs running
+  against a real, confirmed transmission on 146955000 to actually answer the question.**
 - Also fixed alongside the above (not the root cause, but was actively corrupting these
   diagnostic logs into an apparently self-contradictory sequence): `DsdccDecodeBlock`'s
   `logLabel` was just the channel frequency, so if the same frequency is configured as a channel
