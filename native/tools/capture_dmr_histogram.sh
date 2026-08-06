@@ -18,7 +18,7 @@
 # container first - see usage below, same as tools/measure_ppm_noaa.sh).
 #
 # Usage:
-#   ./tools/capture_dmr_histogram.sh -f freq_hz [-d device_index] [-g gain_db] [-p ppm] [-t seconds] [-b bins]
+#   ./tools/capture_dmr_histogram.sh -f freq_hz [-d device_index] [-g gain_db] [-p ppm] [-t seconds] [-b bins] [-r lo:hi]
 #
 #   -f  frequency to capture, in Hz (required) - e.g. 146955000 for the DMR repeater under test.
 #       Capture must span an actual transmission (key up before/during the run) to mean anything.
@@ -27,7 +27,13 @@
 #   -p  PPM correction to apply during capture (default 0) - match whatever's configured in
 #       Settings for this receiver (see tools/measure_ppm_noaa.sh) for a representative capture.
 #   -t  capture duration in seconds (default 10).
-#   -b  number of histogram buckets (default 32).
+#   -b  number of histogram buckets (default 64).
+#   -r  lo:hi amplitude range to histogram, instead of auto-scaling to the full captured
+#       min/max. Use this for a second, zoomed-in pass once a first run's full-range histogram
+#       shows where the interesting activity actually sits - spreading a fixed bin count across
+#       the full range (which can include a wide, low-density noise floor way out toward
+#       +/-32767) leaves too few bins covering a narrow real signal to resolve its internal
+#       structure (e.g. DMR's 4 symbol levels), even when it's genuinely a clean 4FSK signal.
 #
 # Typical use (inside the built image, via docker compose - see native/README.md):
 #   docker compose stop sdr_scanner_native
@@ -41,10 +47,11 @@ device=0
 gain=40
 ppm=0
 seconds=10
-bins=32
+bins=64
 freq=""
+range=""
 
-while getopts "f:d:g:p:t:b:h" opt; do
+while getopts "f:d:g:p:t:b:r:h" opt; do
     case "$opt" in
         f) freq="$OPTARG" ;;
         d) device="$OPTARG" ;;
@@ -52,8 +59,9 @@ while getopts "f:d:g:p:t:b:h" opt; do
         p) ppm="$OPTARG" ;;
         t) seconds="$OPTARG" ;;
         b) bins="$OPTARG" ;;
+        r) range="$OPTARG" ;;
         h)
-            sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) exit 1 ;;
@@ -96,15 +104,22 @@ if [ "$nsamples" -lt 1000 ]; then
 fi
 echo "Captured $nsamples samples." >&2
 
-read -r min max < <(od -A n -t d2 -w2 -v "$capture" | awk '
-    NR == 1 { min = $1; max = $1 }
-    { if ($1 < min) min = $1; if ($1 > max) max = $1 }
-    END { print min, max }
-')
-
-echo
-echo "Discriminator amplitude range: [$min, $max] (of possible [-32768, 32767])"
-echo
+if [ -n "$range" ]; then
+    min="${range%%:*}"
+    max="${range##*:}"
+    echo
+    echo "Histogramming fixed range [$min, $max] (of captured samples, whatever their true extent)"
+    echo
+else
+    read -r min max < <(od -A n -t d2 -w2 -v "$capture" | awk '
+        NR == 1 { min = $1; max = $1 }
+        { if ($1 < min) min = $1; if ($1 > max) max = $1 }
+        END { print min, max }
+    ')
+    echo
+    echo "Discriminator amplitude range: [$min, $max] (of possible [-32768, 32767])"
+    echo
+fi
 
 od -A n -t d2 -w2 -v "$capture" | awk -v min="$min" -v max="$max" -v nbins="$bins" '
 BEGIN {
@@ -112,11 +127,12 @@ BEGIN {
     if (range <= 0) range = 1;
 }
 {
+    if ($1 < min || $1 > max) next; # out-of-range only possible with -r - drop, do not smear into an edge bin
     b = int((($1 - min) / range) * nbins);
     if (b >= nbins) b = nbins - 1;
     if (b < 0) b = 0;
     count[b]++;
-    total++;
+    inrange++;
 }
 END {
     maxcount = 0;
@@ -131,6 +147,7 @@ END {
         for (j = 0; j < nchars; j++) bar = bar "#";
         printf "%7.0f .. %7.0f | %7d %s\n", lo, hi, n, bar;
     }
+    printf "\n%d of %d captured samples fell inside this range.\n", inrange + 0, NR;
 }
 '
 
