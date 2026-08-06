@@ -69,7 +69,10 @@ SoapyReceiver::SoapyReceiver(ReceiverConfig config,
 
     source_ = gr::soapy::source::make(dev, "fc32", 1, deviceArg, streamArgs, {""}, {""});
     source_->set_gain_mode(0, false);
-    source_->set_frequency_correction(0, 0);
+    // See ReceiverConfig::ppmCorrection's comment (Types.h) - defaults to 0 (no correction),
+    // preserving this project's longstanding behavior for anyone who hasn't measured/entered a
+    // real PPM value yet.
+    source_->set_frequency_correction(0, config_.ppmCorrection.value_or(0.0));
 
     if (!config_.gains.empty()) {
         for (const auto& [name, value] : config_.gains) {

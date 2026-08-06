@@ -163,6 +163,7 @@ function renderReceiverRow(rc) {
   const deviceArg = el("input", { type: "text", value: rc.deviceArg || "" });
   const driver = el("input", { type: "text", value: rc.driver || "" });
   const gain = el("input", { type: "number", step: "1", value: rc.gain != null ? rc.gain : "", placeholder: "auto" });
+  const ppm = el("input", { type: "number", step: "0.1", value: rc.ppmCorrection != null ? rc.ppmCorrection : "", placeholder: "0" });
   const enabled = el("input", { type: "checkbox", checked: rc.enabled });
 
   const saveBtn = el("button", { className: "btn", text: "Save" });
@@ -173,6 +174,7 @@ function renderReceiverRow(rc) {
         deviceArg: deviceArg.value === "" ? null : deviceArg.value,
         driver: driver.value === "" ? null : driver.value,
         gain: gain.value === "" ? null : parseFloat(gain.value),
+        ppmCorrection: ppm.value === "" ? null : parseFloat(ppm.value),
         enabled: enabled.checked,
       });
       log(`saved receiver ${rc.id} (restart to apply)`);
@@ -195,6 +197,7 @@ function renderReceiverRow(rc) {
     el("td", {}, [deviceArg]),
     el("td", {}, [driver]),
     el("td", {}, [gain]),
+    el("td", {}, [ppm]),
     el("td", {}, [enabled]),
     el("td", { className: "row-btns" }, [saveBtn, delBtn]),
   ]);
@@ -205,16 +208,19 @@ async function addReceiver() {
   const type = document.getElementById("newRxType").value;
   if (type === "SOAPY" && !driver) { log("add receiver failed: driver is required for SOAPY"); return; }
   const gainStr = document.getElementById("newRxGain").value;
+  const ppmStr = document.getElementById("newRxPpm").value;
   try {
     await api("POST", "/api/receivers", {
       type,
       deviceArg: document.getElementById("newRxDeviceArg").value || null,
       driver: driver || null,
       gain: gainStr === "" ? null : parseFloat(gainStr),
+      ppmCorrection: ppmStr === "" ? null : parseFloat(ppmStr),
     });
     document.getElementById("newRxDeviceArg").value = "";
     document.getElementById("newRxDriver").value = "";
     document.getElementById("newRxGain").value = "";
+    document.getElementById("newRxPpm").value = "";
     log("added receiver (restart to apply)");
     await loadAll();
   } catch (e) { log(`add receiver failed: ${e.message}`); }

@@ -819,6 +819,37 @@ available in the sandbox this was built in):
   repeater (frequency/offset accuracy, deviation, filter bandwidth), ideally checked by capturing
   raw IQ during a confirmed transmission and inspecting/decoding it offline with a known-good tool
   independent of this codebase.
+- **A second real-hardware capture (two receivers, both tuned to 146955000, handheld radio
+  keying the repeater on TG 9 TS 2) confirms the same noise-correlation signature, and adds a new
+  lead worth ruling out: uncorrected receiver frequency error.** Across ~150 sync-transition log
+  lines, the DMR sync-error histogram is essentially unchanged from the earlier finding above: 90
+  of ~116 winning matches sat at exactly 2/24 mismatches (the tolerance boundary), only a handful
+  reached 1, and *none* reached 0. A few individual `DMRVoiceMS`/`DMRVoiceP` holds did run
+  noticeably longer this time (two past 7s, one past 3s, most others 0.4-1.5s) - longer than the
+  "isolated single event" pattern described above - but `getSyncType()` staying labeled the same
+  for that long doesn't by itself prove continuous per-burst re-verification against a real sync
+  word (would need to confirm actual mbelib audio output and/or `getVoice1On()`/`getVoice2On()`
+  went true during those holds, not just the sync-type label), and the underlying mismatch
+  histogram is the same "matching noise" signature either way. Given that histogram was already
+  the strongest evidence pointing upstream of DSDcc, at the C4FM front end
+  (`ChannelBlockDMR.cpp`), one candidate that hadn't been examined yet: `SoapyReceiver.cpp`
+  hardcoded `set_frequency_correction(0, 0)` - no PPM/clock-error correction, and no config field
+  existed to set one. DMR's 4FSK peak deviation is only +/-1944Hz (`kDmrPeakDeviationHz`) inside a
+  6.25kHz channel filter (`kHalfBandwidthHz`) - a cheap RTL-SDR's uncalibrated crystal error
+  (commonly tens of ppm) is easily several kHz at 146.955MHz, enough to push the whole C4FM
+  constellation off-center and produce exactly the kind of statistically-uniform dibit errors this
+  capture shows (every match near the tolerance edge, never clean), while remaining basically
+  unnoticeable on wideband analog FM - which is why this wouldn't have shown up as a regression
+  anywhere else in the project. Added `ReceiverConfig::ppmCorrection` (optional, defaults to unset
+  = 0 = today's behavior unchanged) wired through the DB (`receivers.ppm_correction`, migrated),
+  REST API (`ppmCorrection` on `POST`/`PATCH /api/receivers`, restart-to-apply like every other
+  receiver field), the Settings UI, and `SoapyReceiver`'s `set_frequency_correction()` call - see
+  `tests/test_database.cpp`'s round-trip/migration tests. **This still needs a real value entered
+  and re-tested against real DMR traffic to confirm or rule it out** - measure each receiver's
+  actual PPM error (e.g. `kalibrate-rtl` against a nearby GSM base station, or tuning a known
+  broadcast FM/NOAA frequency and reading off the offset needed to center it) and enter it in
+  Settings before the next capture. If corrected PPM doesn't fix it, the raw-IQ-capture-and-
+  inspect-offline step from the earlier finding is still the next thing to try.
 - Also fixed alongside the above (not the root cause, but was actively corrupting these
   diagnostic logs into an apparently self-contradictory sequence): `DsdccDecodeBlock`'s
   `logLabel` was just the channel frequency, so if the same frequency is configured as a channel

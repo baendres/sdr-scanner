@@ -84,6 +84,7 @@ inline json receiverConfigToJson(const ReceiverConfig& rc) {
         {"driver", rc.driver.has_value() ? json(*rc.driver) : json(nullptr)},
         {"gain", rc.gain.has_value() ? json(*rc.gain) : json(nullptr)},
         {"gains", gains},
+        {"ppmCorrection", rc.ppmCorrection.has_value() ? json(*rc.ppmCorrection) : json(nullptr)},
         {"enabled", rc.enabled},
     };
 }
@@ -188,6 +189,9 @@ inline ReceiverConfig receiverConfigFromJson(const json& j) {
     }
     if (j.contains("gains") && j.at("gains").is_object()) {
         for (auto& [k, v] : j.at("gains").items()) rc.gains[k] = v.get<double>();
+    }
+    if (j.contains("ppmCorrection") && !j.at("ppmCorrection").is_null()) {
+        rc.ppmCorrection = j.at("ppmCorrection").get<double>();
     }
     rc.enabled = j.value("enabled", true);
     return rc;

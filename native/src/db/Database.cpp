@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS receivers (
     driver      TEXT,
     gain        REAL,
     gains_json  TEXT,
+    ppm_correction REAL,
     enabled     INTEGER NOT NULL DEFAULT 1,
     sort_order  INTEGER NOT NULL DEFAULT 0
 );
@@ -169,6 +170,9 @@ void Database::initSchema() {
     if (!columnExists(db_, "channels", "dmr_talkgroup_filter")) {
         exec("ALTER TABLE channels ADD COLUMN dmr_talkgroup_filter INTEGER");
     }
+    if (!columnExists(db_, "receivers", "ppm_correction")) {
+        exec("ALTER TABLE receivers ADD COLUMN ppm_correction REAL");
+    }
 }
 
 bool Database::isEmpty() {
@@ -293,7 +297,7 @@ void Database::deleteChannel(const std::string& id) {
 std::vector<ReceiverConfig> Database::listReceivers() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<ReceiverConfig> out;
-    Stmt s(db_, "SELECT id, type, device_arg, driver, gain, gains_json, enabled, sort_order "
+    Stmt s(db_, "SELECT id, type, device_arg, driver, gain, gains_json, ppm_correction, enabled, sort_order "
                 "FROM receivers ORDER BY sort_order");
     while (s.step()) {
         ReceiverConfig rc;
@@ -313,8 +317,9 @@ std::vector<ReceiverConfig> Database::listReceivers() {
                 for (auto& [k, v] : parsed.items()) rc.gains[k] = v.get<double>();
             } catch (const json::exception&) { /* ignore malformed gains_json */ }
         }
-        rc.enabled = s.colInt(6) != 0;
-        rc.sortOrder = s.colInt(7);
+        rc.ppmCorrection = s.colNullableDouble(6);
+        rc.enabled = s.colInt(7) != 0;
+        rc.sortOrder = s.colInt(8);
         out.push_back(rc);
     }
     return out;
@@ -323,11 +328,11 @@ std::vector<ReceiverConfig> Database::listReceivers() {
 void Database::upsertReceiver(const ReceiverConfig& rc) {
     std::lock_guard<std::mutex> lock(mutex_);
     Stmt s(db_,
-        "INSERT INTO receivers(id, type, device_arg, driver, gain, gains_json, enabled, sort_order) "
-        "VALUES(?,?,?,?,?,?,?,?) "
+        "INSERT INTO receivers(id, type, device_arg, driver, gain, gains_json, ppm_correction, enabled, sort_order) "
+        "VALUES(?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET type=excluded.type, device_arg=excluded.device_arg, "
         "driver=excluded.driver, gain=excluded.gain, gains_json=excluded.gains_json, "
-        "enabled=excluded.enabled, sort_order=excluded.sort_order");
+        "ppm_correction=excluded.ppm_correction, enabled=excluded.enabled, sort_order=excluded.sort_order");
     s.bindText(1, rc.id);
     s.bindText(2, receiverTypeToString(rc.type));
     s.bindNullableText(3, rc.deviceArg);
@@ -339,8 +344,9 @@ void Database::upsertReceiver(const ReceiverConfig& rc) {
         json j = rc.gains;
         s.bindText(6, j.dump());
     }
-    s.bindInt(7, rc.enabled ? 1 : 0);
-    s.bindInt(8, rc.sortOrder);
+    s.bindNullableDouble(7, rc.ppmCorrection);
+    s.bindInt(8, rc.enabled ? 1 : 0);
+    s.bindInt(9, rc.sortOrder);
     s.step();
 }
 

@@ -101,6 +101,7 @@
               <th>Device Arg</th>
               <th>Driver</th>
               <th>Gain (dB)</th>
+              <th title="Crystal/clock frequency error correction, in parts-per-million. Matters most for narrow-deviation digital modes like DMR - measure your device's real PPM error (e.g. kalibrate-rtl, or a known-frequency reference) rather than guessing">PPM Correction</th>
               <th>Enabled</th>
               <th></th>
             </tr>
@@ -117,6 +118,7 @@
               <td><input type="text" id="newRxDeviceArg" placeholder="(optional)" /></td>
               <td><input type="text" id="newRxDriver" placeholder="required for SOAPY" /></td>
               <td><input type="number" id="newRxGain" step="1" placeholder="auto" /></td>
+              <td><input type="number" id="newRxPpm" step="0.1" placeholder="0" /></td>
               <td><input type="checkbox" id="newRxEnabled" checked /></td>
               <td><button class="btn" id="btnAddReceiver">Add</button></td>
             </tr>

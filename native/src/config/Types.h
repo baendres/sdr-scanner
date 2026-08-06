@@ -122,6 +122,18 @@ struct ReceiverConfig {
     std::optional<std::string> driver;      // required for SOAPY
     std::optional<double> gain;
     std::map<std::string, double> gains;    // per-stage gains, e.g. LNA/MIX/VGA
+    // Crystal/clock frequency error correction in parts-per-million, applied via SoapySDR's
+    // SOAPY_SDR_CORRECTION component (see SoapyReceiver.cpp) - unset/0 means "trust the device's
+    // reported frequency as-is" (this project's longstanding default). Wideband analog FM
+    // tolerates a few kHz of uncorrected offset without anyone noticing; narrow-deviation digital
+    // modes like DMR (ETSI TS 102 361 4FSK, only +/-1944Hz/+/-648Hz peak deviation - see
+    // ChannelBlockDMR.cpp's kDmrPeakDeviationHz) don't have that margin - a cheap RTL-SDR's
+    // uncalibrated PPM error (commonly tens of ppm) can be several kHz at VHF, enough to push the
+    // C4FM constellation off-center and cause exactly the kind of statistically-uniform dibit
+    // errors documented in native/README.md's DMR investigation (every sync match sitting right
+    // at DSDcc's tolerance boundary, never better). See native/README.md's "DMR/P25 digital
+    // decode" section for how to measure a device's real PPM error and where to enter it.
+    std::optional<double> ppmCorrection;
     bool enabled = true;
     int sortOrder = 0;
 };

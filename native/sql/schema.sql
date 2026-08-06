@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS receivers (
     driver      TEXT,                 -- required for type = 'SOAPY'
     gain        REAL,
     gains_json  TEXT,                 -- optional per-stage gains, e.g. {"LNA":10,"MIX":10,"VGA":10}
+    ppm_correction REAL,               -- crystal/clock frequency error correction, in ppm
     enabled     INTEGER NOT NULL DEFAULT 1,
     sort_order  INTEGER NOT NULL DEFAULT 0
 );

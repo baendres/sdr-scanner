@@ -208,3 +208,69 @@ TEST_CASE("Database round-trips receiver gains map") {
     std::filesystem::remove(path + "-wal");
     std::filesystem::remove(path + "-shm");
 }
+
+TEST_CASE("Database round-trips receiver ppmCorrection") {
+    std::string path = tempDbPath();
+    Database db(path);
+    db.initSchema();
+
+    ReceiverConfig rc;
+    rc.id = makeUuid();
+    rc.type = ReceiverType::RTL_SDR;
+    rc.ppmCorrection = 23.5;
+    db.upsertReceiver(rc);
+
+    auto receivers = db.listReceivers();
+    REQUIRE(receivers.size() == 1);
+    REQUIRE(receivers[0].ppmCorrection.has_value());
+    CHECK(*receivers[0].ppmCorrection == 23.5);
+
+    receivers[0].ppmCorrection.reset();
+    db.upsertReceiver(receivers[0]);
+    receivers = db.listReceivers();
+    CHECK_FALSE(receivers[0].ppmCorrection.has_value());
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
+}
+
+TEST_CASE("Database migrates an existing receivers table that predates ppm_correction") {
+    // Same situation as the channels-table migration tests above, for the receivers table's
+    // newer ppm_correction column - a database created before this column existed needs the
+    // explicit ALTER TABLE path, not just CREATE TABLE IF NOT EXISTS.
+    std::string path = tempDbPath();
+    {
+        sqlite3* raw = nullptr;
+        REQUIRE(sqlite3_open(path.c_str(), &raw) == SQLITE_OK);
+        const char* oldSchema = R"SQL(
+            CREATE TABLE receivers (
+                id TEXT PRIMARY KEY, type TEXT NOT NULL, device_arg TEXT, driver TEXT,
+                gain REAL, gains_json TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO receivers(id, type) VALUES ('pre-existing', 'RTL-SDR');
+        )SQL";
+        REQUIRE(sqlite3_exec(raw, oldSchema, nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(raw);
+    }
+
+    Database db(path);
+    db.initSchema();
+
+    auto receivers = db.listReceivers();
+    REQUIRE(receivers.size() == 1);
+    CHECK(receivers[0].id == "pre-existing");
+    CHECK_FALSE(receivers[0].ppmCorrection.has_value());
+
+    ReceiverConfig rc = receivers[0];
+    rc.ppmCorrection = -8.2;
+    db.upsertReceiver(rc);
+    receivers = db.listReceivers();
+    REQUIRE(receivers[0].ppmCorrection.has_value());
+    CHECK(*receivers[0].ppmCorrection == -8.2);
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
+}
