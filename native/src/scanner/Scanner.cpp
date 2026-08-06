@@ -297,6 +297,14 @@ void Scanner::removeChannel(const std::string& channelId) {
         channelConfigsById_.erase(channelId);
         db_.deleteChannel(channelId);
     }
+    {
+        // Without this, the deleted channel's last-known status lingers in every snapshot
+        // forever (channelStatusById_ is only ever written by onChannelStatus(), never pruned
+        // otherwise) - the web UI then shows a phantom "Active Channels" entry with no config to
+        // resolve a label/frequency from, rendering blank/by-UUID.
+        std::lock_guard<std::mutex> lock(statusMutex_);
+        channelStatusById_.erase(channelId);
+    }
     buildWindows();
 }
 
