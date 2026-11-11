@@ -3,7 +3,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <iostream>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <thread>
 
 namespace sdrscan {
@@ -17,6 +20,15 @@ namespace {
 // message-spam bug - see the note on outputBuffer_ in the header. 50ms keeps latency low while
 // still batching well below that original per-tick granularity (~20 messages/sec here).
 constexpr size_t kSamplesPerFrame = AUDIO_SAMPLERATE / 20;
+
+// Upper bound on a client's WS upgrade handshake. A real browser finishes in milliseconds.
+constexpr auto kHandshakeTimeout = std::chrono::seconds(5);
+// Cap on concurrent handshake threads so a connection flood can't exhaust threads/fds.
+constexpr int kMaxPendingHandshakes = 32;
+// TCP_USER_TIMEOUT for client sockets: if written data sits unacknowledged this long the
+// kernel aborts the connection, which makes writerLoop()'s otherwise-unbounded blocking
+// write() to a vanished peer fail and return instead of stalling audio for every client.
+constexpr unsigned int kTcpUserTimeoutMs = 10000;
 } // namespace
 
 AudioOutputWebsocket::AudioOutputWebsocket(std::string host, int port)
@@ -65,21 +77,86 @@ void AudioOutputWebsocket::acceptLoop() {
         }
         if (ec) {
             if (stopFlag_) break;
+            // Don't spin on persistent errors (EMFILE etc).
+            std::cerr << "AudioOutputWebsocket: accept failed: " << ec.message() << "\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
+        // The accepted socket must be blocking for the sync handshake/writes below.
+        socket.non_blocking(false, ec);
+        socket.set_option(tcp::no_delay(true), ec);
+        socket.set_option(boost::asio::socket_base::keep_alive(true), ec);
+        unsigned int userTimeout = kTcpUserTimeoutMs;
+        ::setsockopt(socket.native_handle(), IPPROTO_TCP, TCP_USER_TIMEOUT, &userTimeout, sizeof(userTimeout));
+
+        {
+            std::lock_guard<std::mutex> lock(pendingMutex_);
+            if (pendingHandshakes_ >= kMaxPendingHandshakes) {
+                std::cerr << "AudioOutputWebsocket: too many pending handshakes, dropping connection\n";
+                continue;  // socket closes on scope exit
+            }
+            ++pendingHandshakes_;
+        }
+
+        // Previously the handshake (ws->accept()) ran right here, synchronously and with no
+        // timeout. Any peer that opened a TCP connection and then never sent a complete HTTP
+        // upgrade request - an internet port scanner hitting the forwarded port, a phone that
+        // lost WiFi mid-connect - blocked this thread forever, so every later audio client sat
+        // in the kernel's listen backlog and never got a 101. Control (HttpServer, thread per
+        // connection) kept working, which is exactly the observed symptom.
         auto ws = std::make_shared<WsStream>(std::move(socket));
-        try {
-            ws->accept();
-            ws->binary(true);
-        } catch (const std::exception& e) {
-            std::cerr << "AudioOutputWebsocket: handshake failed: " << e.what() << "\n";
-            continue;
-        }
-
-        std::lock_guard<std::mutex> lock(clientsMutex_);
-        clients_.push_back(ws);
+        std::thread(&AudioOutputWebsocket::handshakeClient, this, ws).detach();
     }
+}
+
+void AudioOutputWebsocket::handshakeClient(std::shared_ptr<WsStream> ws) {
+    auto& socket = beast::get_lowest_layer(*ws);
+
+    // Watchdog: if the handshake hasn't finished in kHandshakeTimeout, shutdown() the socket,
+    // which makes the blocking read inside ws->accept() return with an error (same mechanism
+    // close() relies on for stuck writes).
+    std::mutex m;
+    std::condition_variable cv;
+    bool done = false;
+    std::thread watchdog([&] {
+        std::unique_lock<std::mutex> lk(m);
+        if (!cv.wait_for(lk, kHandshakeTimeout, [&] { return done || stopFlag_.load(); }) || stopFlag_) {
+            boost::system::error_code ec;
+            socket.shutdown(tcp::socket::shutdown_both, ec);
+        }
+    });
+
+    bool ok = false;
+    try {
+        ws->accept();
+        ws->binary(true);
+        ok = true;
+    } catch (const std::exception& e) {
+        boost::system::error_code ec;
+        std::cerr << "AudioOutputWebsocket: handshake failed from "
+                  << socket.remote_endpoint(ec) << ": " << e.what() << "\n";
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(m);
+        done = true;
+    }
+    cv.notify_one();
+    watchdog.join();
+
+    if (ok) {
+        std::lock_guard<std::mutex> lock(clientsMutex_);
+        // Re-check under clientsMutex_: close() clears clients_ under the same lock after
+        // setting stopFlag_, so a client added after that would never be closed.
+        if (!stopFlag_) clients_.push_back(ws);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex_);
+        --pendingHandshakes_;
+    }
+    pendingCv_.notify_all();
 }
 
 void AudioOutputWebsocket::close() {
@@ -89,6 +166,13 @@ void AudioOutputWebsocket::close() {
         acceptor_->close(ec);
     }
     if (acceptThread_.joinable()) acceptThread_.join();
+
+    // Wait for in-flight handshake threads (each is bounded by kHandshakeTimeout, and their
+    // watchdogs fire immediately once they see stopFlag_ on their next wakeup).
+    {
+        std::unique_lock<std::mutex> lock(pendingMutex_);
+        pendingCv_.wait(lock, [this] { return pendingHandshakes_ == 0; });
+    }
 
     // Must happen before writerThread_.join(), not after: writerLoop() may be blocked in a
     // client's write() against an unresponsive peer right now (dropped WiFi, a suspended

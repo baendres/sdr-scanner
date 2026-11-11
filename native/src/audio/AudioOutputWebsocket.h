@@ -5,6 +5,7 @@
 #include <boost/beast/core/stream_traits.hpp>
 
 #include <atomic>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -32,6 +33,11 @@ private:
     using WsStream = boost::beast::websocket::stream<boost::asio::ip::tcp::socket>;
 
     void acceptLoop();
+    // Runs one client's WS upgrade handshake on its own short-lived thread, bounded by
+    // kHandshakeTimeout, so a peer that opens TCP but never completes the upgrade (port
+    // scanner, phone that dropped WiFi mid-connect, ...) can't wedge acceptLoop() - see the
+    // note in AudioOutputWebsocket.cpp.
+    void handshakeClient(std::shared_ptr<boost::beast::websocket::stream<boost::asio::ip::tcp::socket>> ws);
     // Drains frameQueue_ and performs the actual (blocking) per-client socket writes - see the
     // comment on frameQueue_ for why this can't happen on AudioMixer's own thread.
     void writerLoop();
@@ -46,6 +52,12 @@ private:
 
     std::mutex clientsMutex_;
     std::vector<std::shared_ptr<WsStream>> clients_;
+
+    // In-flight handshakeClient() threads; close() waits for this to reach zero so none of
+    // them outlive `this`.
+    std::mutex pendingMutex_;
+    std::condition_variable pendingCv_;
+    int pendingHandshakes_ = 0;
 
     // AudioMixer calls send() roughly once per ms with whatever handful of samples
     // accumulated in that instant. Forwarding each of those as its own WS message produces
