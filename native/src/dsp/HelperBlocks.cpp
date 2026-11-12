@@ -60,6 +60,13 @@ int binNum(double freqHz, int fftSize, int sampleRate) {
 }
 } // namespace
 
+namespace {
+// Absolute floor on the alert-tone bin's |X|^2 (Blackman-Harris windowed, unnormalized FFT of
+// +/-1.0 full-scale audio). A -60 dBFS 1050Hz tone at kFftSize=1024 lands around 3e-2 here;
+// 1e-6 is ~45dB below that, so it only rejects digital silence / denormal-level residue.
+constexpr float kMinTonePower = 1e-6f;
+} // namespace
+
 EasToneDetectBlock::EasToneDetectBlock(ActiveCallback cb,
                                         const std::vector<double>& testTonesHz,
                                         double refLowHz,
@@ -114,10 +121,17 @@ int EasToneDetectBlock::work(int noutput_items,
             refPwr = std::max(refPwr, mag2(i));
         }
 
+        // Comparisons must be strict and the tone must clear an absolute floor: with all-zero
+        // input (FM power squelch closed - pwr_squelch_cc with gate=false emits zeros) every bin
+        // is 0, and the old non-strict `p < ...` checks all evaluated 0 < 0 == false, i.e.
+        // silence read as "tone detected" on every frame. That latched NOAA/EAS channels
+        // ACTIVE forever (and pinned a receiver to that window, starving every other window
+        // of scan time) whenever their squelch was closed.
         bool active = true;
         for (int idx : testIndexes_) {
             float p = mag2(idx);
-            if (p < refPwr * static_cast<float>(thresholdRatio_) || p < mag2(idx - 1) || p < mag2(idx + 1)) {
+            if (!(p > kMinTonePower) || !(p > refPwr * static_cast<float>(thresholdRatio_))
+                || !(p > mag2(idx - 1)) || !(p > mag2(idx + 1))) {
                 active = false;
                 break;
             }

@@ -282,8 +282,20 @@ btnMute?.addEventListener("click", () => {
   const c = cfgById.get(selectedId); if (!c) return;
   send({ type: "ChannelMute", data: { id: selectedId, mute: !c.mute } });
 });
+// Mirrors ChannelConfig::isEnabledNow() (Types.h): a disabled channel isn't in any scan window,
+// so forcing it on does nothing server-side - it just never shows up as active and never plays.
+function isChannelEnabledNow(c) {
+  if (c.disableUntil != null) return (Date.now() / 1000) > c.disableUntil;
+  return !!c.enabled;
+}
+
 btnForce?.addEventListener("click", () => {
   const c = cfgById.get(selectedId); if (!c) return;
+  // Turning force *off* is always allowed (clears a stale flag on a disabled channel).
+  if (!c.forceActive && !isChannelEnabledNow(c)) {
+    alert(`"${c.label ?? selectedId}" is disabled - enable it before forcing it active.`);
+    return;
+  }
   send({ type: "ChannelForceActive", data: { id: selectedId, forceActive: !c.forceActive } });
 });
 btnSolo?.addEventListener("click", () => {
